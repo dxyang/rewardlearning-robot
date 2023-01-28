@@ -1,5 +1,5 @@
 '''
-this directory is copied from
+this directory is heavily adapted from
 
 https://github.com/Stanford-ILIAD/odyssey/blob/main/odyssey/robot
 '''

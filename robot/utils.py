@@ -9,39 +9,39 @@ import numpy as np
 ROBOT_IP = "173.16.0.1"
 
 # Constants
-HZ, POLE_LIMIT, TOLERANCE = 20, (1.0 - 1e-6), 1e-10
+HZ = 20
+POLE_LIMIT = 1.0 - 1e-6
+TOLERANCE = 1e-10
 
-# fmt: off
 HOMES = {
-    "default": [0.0, -np.pi / 4.0, 0.0, -3.0 * np.pi / 4.0, 0.0, np.pi / 2.0, np.pi / 4.0],
+    "default": [0.0, -np.pi / 4.0, 0.0, -3.0 * np.pi / 4.0, 0.0, np.pi / 2.0, np.pi / 4.0]
 }
 
-# Joint Controller gains -- we want a compliant robot when recording, and stiff when playing back / teleoperating
+# Control Frequency & other useful constants...
+#   > Ref: Gripper constants from: https://frankaemika.github.io/libfranka/grasp_object_8cpp-example.html
+GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH = 0.5, 120, 0.08570
+
+# Joint Impedance Controller gains (used mostly for recording kinesthetic demos & playback)
+#   =>> Libfranka Defaults (https://frankaemika.github.io/libfranka/joint_impedance_control_8cpp-example.html)
 KQ_GAINS = {
-    "record": [1, 1, 1, 1, 1, 1, 1],
-    "rb2": [26.6667, 40.0000, 33.3333, 33.3333, 23.3333, 16.6667, 6.6667],
-    "default": [80, 120, 100, 100, 70, 50, 20],
-    "teleoperate": [240.0, 360.0, 300.0, 300.0, 210.0, 150.0, 60.0],
+    "record": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+    "default": [600, 600, 600, 600, 250, 150, 50],
 }
 KQD_GAINS = {
-    "record": [1, 1, 1, 1, 1, 1, 1],
-    "rb2": [3.3333, 3.3333, 3.3333, 3.3333, 1.6667, 1.6667, 1.6667],
-    "default": [10, 10, 10, 10, 5, 5, 5],
-    "teleoperate": [30.0, 30.0, 30.0, 30.0, 15.0, 15.0, 15.0],
+    "record": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+    "default": [50, 50, 50, 50, 30, 25, 15],
 }
 
-# End-Effector Controller gains -- we want a compliant robot when recording, and stiff when playing back / operating
-KX_GAINS = {
-    "record": [1, 1, 1, 1, 1, 1],
-    "default": [150, 150, 150, 10, 10, 10],
-    "teleoperate": [450, 450, 450, 30, 30, 30],     # Upper bound is ???, so using joint default -- 3x multiplier
-}
-KXD_GAINS = {
-    "record": [1, 1, 1, 1, 1, 1],
-    "default": [25, 25, 25, 7, 7, 7],
-    "teleoperate": [75, 75, 75, 21, 21, 21],        # Upper bound is ???, so using joint default -- 3x multiplier
-}
-# fmt: off
+# End-Effector Impedance Controller gains (known to be not great...)
+#   Issue Ref: https://github.com/facebookresearch/fairo/issues/1280#issuecomment-1182727019)
+#   =>> P :: Libfranka Defaults (https://frankaemika.github.io/libfranka/cartesian_impedance_control_8cpp-example.html)
+#   =>> D :: Libfranka Defaults = int(2 * sqrt(KP))
+KX_GAINS = {"default": [150, 150, 150, 10, 10, 10], "teleoperate": [200, 200, 200, 10, 10, 10]}
+KXD_GAINS = {"default": [25, 25, 25, 7, 7, 7], "teleoperate": [50, 50, 50, 7, 7, 7]}
+
+# Resolved Rate Controller Gains =>> (should be default EE controller...)
+KRR_GAINS = {"default": [50, 50, 50, 50, 30, 20, 10]}
+
 
 
 class Rate:
