@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation as R
 
 
 from robot.controllers import ResolvedRateControl
-from robot.util import (
+from robot.utils import (
     ROBOT_IP, HOMES, HZ,
     KQ_GAINS, KQD_GAINS, KX_GAINS, KXD_GAINS, KRR_GAINS,
     GRIPPER_MAX_WIDTH, GRIPPER_FORCE, GRIPPER_SPEED,
