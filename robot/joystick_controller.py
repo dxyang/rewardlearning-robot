@@ -55,7 +55,7 @@ class Buttons(object):
         # Get "A", "B", "X", "Y" Button Presses
         pygame.event.get()
         a, b = self.gamepad.get_button(0), self.gamepad.get_button(1)
-        x, y = self.gamepad.get_button(2), self.gamepad.get_button(3), self.gamepad.get_button(7)
+        x, y = self.gamepad.get_button(2), self.gamepad.get_button(3)
 
         return a, b, x, y
 

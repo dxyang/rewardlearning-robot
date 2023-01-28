@@ -92,9 +92,9 @@ def demonstrate() -> None:
         )
 
         # Loop on valid button input...
-        a, _, y = buttons.input()
+        a, _, _, y = buttons.input()
         while not a and not y:
-            a, _, y = buttons.input()
+            a, _, _, y = buttons.input()
 
         # Reset if (Y)...
         if y:
@@ -108,7 +108,7 @@ def demonstrate() -> None:
         joint_qs = []
         for _ in range(int(args.max_time_per_demo * HZ) - 1):
             # Get Button Input (only if True) --> handle extended button press...
-            _, x, _ = buttons.input()
+            _, _, x, _ = buttons.input()
 
             # Terminate...
             if x:
@@ -133,9 +133,9 @@ def demonstrate() -> None:
         else:
             # Loop on valid user button input...
             print("[*] Optional -- would you like to replay demonstration? Press (A) to playback, and (X) to continue!")
-            a, x, _ = buttons.input()
+            a, _, x, _ = buttons.input()
             while not a and not x:
-                a, x, _ = buttons.input()
+                a, _, x, _ = buttons.input()
 
             # Skip Playback!
             if x:
@@ -149,9 +149,9 @@ def demonstrate() -> None:
 
             # Block on User Ready -- Robot will move, so this is for safety...
             print("\tReady to playback! Get out of the way, and hit (A) to continue...")
-            a, _, _ = buttons.input()
+            a, _, _, _ = buttons.input()
             while not a:
-                a, _, _ = buttons.input()
+                a, _, _, _ = buttons.input()
 
             # Execute Trajectory
             print("\tReplaying...")
@@ -165,9 +165,9 @@ def demonstrate() -> None:
         print("Next? Press (A) to continue or (Y) to quit... or (X) to retry demo and skip save")
 
         # Loop on valid button input...
-        a, x, y = buttons.input()
+        a, _, x, y = buttons.input()
         while not a and not y and not x:
-            a, x, y = buttons.input()
+            a, _, x, y = buttons.input()
 
         # Exit...
         if y:
