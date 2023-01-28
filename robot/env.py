@@ -10,11 +10,11 @@ import torch
 from gym import Env
 from polymetis import RobotInterface
 
-from .util import HOMES, HZ, Rate, quat2euler
+from .util import ROBOT_IP, HOMES, HZ, Rate, quat2euler
 
 
 class FrankaEnv(Env):
-    def __init__(self, home: str, hz: int = HZ, controller: str = "osc") -> None:
+    def __init__(self, home: str = HOMES["default"], hz: int = HZ, controller: str = "osc") -> None:
         """
         Initialize a *physical* Franka Environment, with the given home pose, PD controller gains, and camera.
         :param home: Default home position (specified as a string index into `HOMES` above!)
@@ -28,7 +28,7 @@ class FrankaEnv(Env):
         # Initialize Robot and PD Controller
         self.reset()
 
-    def robot_setup(self, franka_ip: str = "172.16.0.1") -> None:
+    def robot_setup(self, franka_ip: str = ROBOT_IP) -> None:
         # Initialize Robot Interface and Reset to Home
         self.robot = RobotInterface(ip_address=franka_ip)
         self.robot.set_home_pose(torch.Tensor(HOMES.get(self.home, HOMES["default"])))
@@ -119,4 +119,3 @@ class FrankaEnv(Env):
         time.sleep(1)
 
         return logs
-Footer

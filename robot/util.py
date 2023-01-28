@@ -6,6 +6,7 @@ import time
 
 import numpy as np
 
+ROBOT_IP = "173.16.0.1"
 
 # Constants
 HZ, POLE_LIMIT, TOLERANCE = 20, (1.0 - 1e-6), 1e-10
