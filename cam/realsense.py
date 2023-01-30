@@ -17,13 +17,16 @@ def get_connected_device_info():
     ]
     return devices
 
-
+PREFERRED_SERIAL_NUMBER = "215122255998" # D455
 class RealSenseInterface:
     def __init__(self, serial_number: str = None):
         if serial_number is None:
             sns = get_connected_device_sns()
             assert len(sns) != 0
-            self._serial_number = sns[0]
+            if PREFERRED_SERIAL_NUMBER in sns:
+                self._serial_number = PREFERRED_SERIAL_NUMBER
+            else:
+                self._serial_number = sns[0]
         else:
             self._serial_number = serial_number
 
