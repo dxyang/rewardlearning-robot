@@ -176,7 +176,7 @@ class FrankaEnv(gym.Env):
             self.current_gripper_state = {"width": gripper_state.width, "max_width": gripper_state.max_width}
             self.gripper_is_open = True
 
-    def process_obs(self, obs):
+    def _process_obs(self, obs):
         # child classes could do something fancier with the obs dict
         return obs
 
@@ -193,7 +193,7 @@ class FrankaEnv(gym.Env):
         self.robot_setup()
 
         obs = self.get_obs()
-        return self.process_obs(obs)
+        return self._process_obs(obs)
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -295,7 +295,7 @@ class FrankaEnv(gym.Env):
 
         # Return observation, Gym default signature...
         obs = self.get_obs()
-        return self.process_obs(obs), 0, False, None
+        return self._process_obs(obs), 0, False, None
 
 
     def close(self) -> None:
@@ -318,6 +318,16 @@ class FrankaEnv(gym.Env):
 
         time.sleep(1)
 
+    @property
+    def ee_position(self) -> np.ndarray:
+        """Return current EE position --> 3D x/y/z!"""
+        return self.current_ee_pose[:3]
+
+    @property
+    def ee_orientation(self) -> np.ndarray:
+        """Return current EE orientation as euler angles (in radians) --> 3D roll/pitch/yaw!"""
+        return self.current_ee_rot
+
 '''
 empirically moved around the arm to figure out where it could reach without probably running into joint lock
 '''
@@ -334,10 +344,11 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
 
     real robot tasks should inherit from this class and redefine how reward is calculated
     '''
-    def __init__(self, xyz_min: np.ndarray, xyz_max: np.ndarray, **kwargs):
+    def __init__(self, xyz_min: np.ndarray = FRANKA_XYZ_MIN, xyz_max: np.ndarray = FRANKA_XYZ_MAX, **kwargs):
         self.xyz_min = xyz_min
         self.xyz_max = xyz_max
-        FrankaEnv.__init__(**kwargs)
+        self.action_scale = 0.025
+        FrankaEnv.__init__(self, **kwargs)
         assert self.controller == "cartesian"
 
     @property
@@ -363,9 +374,9 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
     def observation_space(self):
         obs_dict = GymDict()
         if self.use_gripper:
-            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(12,), dtype=np.float32)
+            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(15,), dtype=np.float32)
         else:
-            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(13,), dtype=np.float32)
+            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(14,), dtype=np.float32)
 
         if self.use_camera:
             obs_dict["rgb_image"] = gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8) # HWC
@@ -393,27 +404,35 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         return reward
 
     def step(
-        self, action: Optional[np.ndarray], delta: bool = False, open_gripper: Optional[bool] = None
+        self, action: Optional[np.ndarray], delta: bool = True, open_gripper: Optional[bool] = None
     ) -> Tuple[Dict[str, np.ndarray], int, bool, None]:
         curr_ee_xyz = self.current_ee_pose[:3]
 
         if self.controller == "cartesian":
             if delta:
+                # actions are coming in between -1, 1 (probably?)
+                scaled_xyz_action = action[:3] * self.action_scale
+
                 # delta should keep us within the sandbox
                 max_delta = self.xyz_max - curr_ee_xyz
-                min_delta = curr_ee_xyz - self.xyz_min
+                min_delta = self.xyz_min - curr_ee_xyz
 
                 clamped_action = np.array([
-                    np.max(np.min(max_delta[0], action[0]), min_delta[0]),
-                    np.max(np.min(max_delta[1], action[1]), min_delta[1]),
-                    np.max(np.min(max_delta[2], action[2]), min_delta[2]),
+                    max(min(max_delta[0], scaled_xyz_action[0]), min_delta[0]),
+                    max(min(max_delta[1], scaled_xyz_action[1]), min_delta[1]),
+                    max(min(max_delta[2], scaled_xyz_action[2]), min_delta[2]),
+                    #action[3], action[4], action[5],
+                    0, 0, 0
                 ])
             else:
+                assert False # this seems.... dangerous
+
                 # absolute position targets should remain within the sandbox
                 clamped_action = np.array([
                     np.max(np.min(self.xyz_max[0], action[0]), self.xyz_max[0]),
                     np.max(np.min(self.xyz_max[1], action[1]), self.xyz_max[1]),
                     np.max(np.min(self.xyz_max[2], action[2]), self.xyz_max[2]),
+                    action[3], action[4], action[5],
                 ])
         else:
             raise NotImplementedError(f"Havevn't thought through space clamping for this controller!")
@@ -425,13 +444,13 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         return obs, reward, done, info
 
 
-class RealFrankReach(SafeTaskSpaceFrankEnv):
+class SimpleRealFrankReach(SafeTaskSpaceFrankEnv):
     def __init__(self, goal, **kwargs):
         self.goal = goal
-        SafeTaskSpaceFrankEnv.__init__(**kwargs)
+        SafeTaskSpaceFrankEnv.__init__(self, **kwargs)
 
     def _calculate_reward(self, obs, reward, info):
-        dist = np.linalg.norm(obs[:3], self.goal)
+        dist = np.linalg.norm(obs['obs'][:3] - self.goal)
         return -dist
 
 
