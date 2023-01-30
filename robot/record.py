@@ -39,6 +39,8 @@ class ArgumentParser(Tap):
     collection_strategy: str = "kinesthetic"            # How demos are collected :: only `kinesthetic` for now!
     controller: str = "joint"                           # Demonstration & playback uses a Joint Impedance controller...
     resume: bool = True                                 # Resume demonstration collection (on by default)
+
+    plot_trajectory: bool = True                       # generate html plot for visualizing trajectory
     # fmt: on
 
 
@@ -142,10 +144,12 @@ def demonstrate() -> None:
                 do_playback = False
 
         # Special Playback Handling -- change gains, and replay!
+        eef_xyzs = []
         if do_playback:
             # TODO(siddk) -- handle Camera observation logging...
             env.set_mode("default")
-            env.reset()
+            obs = env.reset()
+            eef_xyzs.append(obs["ee_pose"][:3])
 
             # Block on User Ready -- Robot will move, so this is for safety...
             print("\tReady to playback! Get out of the way, and hit (A) to continue...")
@@ -156,10 +160,21 @@ def demonstrate() -> None:
             # Execute Trajectory
             print("\tReplaying...")
             for idx in range(len(joint_qs)):
-                env.step(joint_qs[idx])
+                obs, _, _, _ = env.step(joint_qs[idx])
+                eef_xyzs.append(obs["ee_pose"][:3])
 
             # Close Environment
             env.close()
+
+        if args.plot_trajectory:
+            from viz.plot import PlotlyScene, plot_transform, plot_points_sequence
+            scene = PlotlyScene(
+                size=(600, 600), x_range=(-1, 1), y_range=(-1, 1), z_range=(-1, 1)
+            )
+            plot_transform(scene.figure, np.eye(4), label="world origin")
+            eef_xyzs_np = np.array(eef_xyzs).T # N x 3
+            plot_points_sequence(scene.figure, points=eef_xyzs_np)
+            scene.plot_scene_to_html("test")
 
         # Move on?
         print("Next? Press (A) to continue or (Y) to quit... or (X) to retry demo and skip save")
