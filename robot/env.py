@@ -295,7 +295,7 @@ class FrankaEnv(gym.Env):
 
         # Return observation, Gym default signature...
         obs = self.get_obs()
-        return self._process_obs(obs), 0, False, None
+        return self._process_obs(obs), 0, False, {}
 
 
     def close(self) -> None:
@@ -335,7 +335,7 @@ FRANKA_XYZ_MIN = np.array([
     0.28, -0.25, 0.14
 ])
 FRANKA_XYZ_MAX = np.array([
-    0.64, 0.25, 0.58
+    0.7, 0.25, 0.58
 ])
 
 class SafeTaskSpaceFrankEnv(FrankaEnv):
@@ -347,7 +347,7 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
     def __init__(self, xyz_min: np.ndarray = FRANKA_XYZ_MIN, xyz_max: np.ndarray = FRANKA_XYZ_MAX, **kwargs):
         self.xyz_min = xyz_min
         self.xyz_max = xyz_max
-        self.action_scale = 0.025
+        self.action_scale = 0.05
         FrankaEnv.__init__(self, **kwargs)
         assert self.controller == "cartesian"
 
