@@ -368,6 +368,11 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         else:
             raise NotImplementedError(f"Controller mode `{self.controller}` not supported!")
 
+        # let's say gripper open is positive vals and gripper closed is negative vals
+        if self.use_gripper:
+            np.append(low, -1.0)
+            np.append(hi, 1.0)
+
         return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
 
     @property
@@ -404,9 +409,13 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         return reward
 
     def step(
-        self, action: Optional[np.ndarray], delta: bool = True, open_gripper: Optional[bool] = None
+        self, action: Optional[np.ndarray], delta: bool = True
     ) -> Tuple[Dict[str, np.ndarray], int, bool, None]:
         curr_ee_xyz = self.current_ee_pose[:3]
+
+        gripper_action = 1.0
+        if self.use_gripper:
+            gripper_action = action[-1]
 
         if self.controller == "cartesian":
             if delta:
@@ -421,8 +430,8 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
                     max(min(max_delta[0], scaled_xyz_action[0]), min_delta[0]),
                     max(min(max_delta[1], scaled_xyz_action[1]), min_delta[1]),
                     max(min(max_delta[2], scaled_xyz_action[2]), min_delta[2]),
-                    #action[3], action[4], action[5],
-                    0, 0, 0
+                    action[3], action[4], action[5],
+                    # 0, 0, 0
                 ])
             else:
                 assert False # this seems.... dangerous
@@ -437,7 +446,7 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         else:
             raise NotImplementedError(f"Havevn't thought through space clamping for this controller!")
 
-        obs, reward, done, info = super().step(action=clamped_action, delta=delta, open_gripper=open_gripper)
+        obs, reward, done, info = super().step(action=clamped_action, delta=delta, open_gripper=(gripper_action >= 0.0))
 
         reward = self._calculate_reward(obs, reward, info)
 
