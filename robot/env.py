@@ -11,6 +11,7 @@ import torch
 import gym
 from gym.spaces import Dict as GymDict
 from polymetis import GripperInterface, RobotInterface
+from PIL import Image
 from scipy.spatial.transform import Rotation as R
 import torchvision.transforms as T
 
@@ -333,7 +334,7 @@ class FrankaEnv(gym.Env):
 empirically moved around the arm to figure out where it could reach without probably running into joint lock
 '''
 FRANKA_XYZ_MIN = np.array([
-    0.28, -0.25, 0.14
+    0.28, -0.25, 0.16
 ])
 FRANKA_XYZ_MAX = np.array([
     0.7, 0.25, 0.58
@@ -345,17 +346,25 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
 
     real robot tasks should inherit from this class and redefine how reward is calculated
     '''
-    def __init__(self, xyz_min: np.ndarray = FRANKA_XYZ_MIN, xyz_max: np.ndarray = FRANKA_XYZ_MAX, use_r3m: bool = False, **kwargs):
+    def __init__(
+        self,
+        xyz_min: np.ndarray = FRANKA_XYZ_MIN,
+        xyz_max: np.ndarray = FRANKA_XYZ_MAX,
+        use_r3m: bool = False,
+        only_pos_control: bool = True,
+        **kwargs
+    ):
         self.xyz_min = xyz_min
         self.xyz_max = xyz_max
         self.action_scale = 0.05
         self.use_r3m = use_r3m
+        self.only_pos_control = only_pos_control
         if self.use_r3m:
             self.r3m = load_r3m("resnet18")
             self._transforms = T.Compose([
                 T.Resize(256),
                 T.CenterCrop(224),
-                T.ToTensor(), # divides by 255!
+                T.ToTensor(), # divides by 255, will also convert to chw
             ])
             self.torch_device = "cuda"
             self.r3m.eval()
@@ -372,8 +381,11 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
             hi = np.array([np.pi for i in range(7)])
         elif self.controller == "cartesian":
             # 6-DoF (x, y, z, roll, pitch, yaw) (absolute or deltas)
-            low = np.array([-1, -1, -1, -np.pi, -np.pi, -np.pi])
-            hi = np.array([1, 1, 1, np.pi, np.pi, np.pi])
+            low = np.array([-1, -1, -1])
+            hi = np.array([1, 1, 1])
+            if not self.only_pos_control:
+                low = np.append(low, [-np.pi, -np.pi, -np.pi])
+                hi = np.append(hi, [np.pi, np.pi, np.pi])
         elif self.controller == "resolved-rate":
             # 6D end-effector velocities (deltas) in X/Y/Z/Roll/Pitch/Yaw...
             low = np.array([float("-inf") for i in range(6)])
@@ -413,15 +425,15 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
 
         if self.use_gripper:
             gripper_val = normalize_gripper(obs["gripper_width"])
-            state_obs = np.concatenate([state_obs, gripper_val])
+            state_obs = np.append(state_obs, gripper_val)
         new_obs["obs"] = state_obs
 
         if self.use_camera:
             new_obs["rgb_image"] = obs["rgb_image"]
             if self.use_r3m:
                 # convert from hwc to bchw
-                bchw_img = np.expand_dims(np.transpose(obs["rgb_image"], (2, 0, 1)), axis=0)
-                processed_image = self._transforms(bchw_img).to(self.torch_device)
+                pil_img = Image.fromarray(obs["rgb_image"])
+                processed_image = self._transforms(pil_img).unsqueeze(0).to(self.torch_device)
                 with torch.no_grad():
                     embedding = self.r3m(processed_image * 255.0) # r3m expects input to be 0-255
                 r3m_embedding = embedding.cpu().squeeze().numpy()
@@ -459,9 +471,12 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
                     max(min(max_delta[0], scaled_xyz_action[0]), min_delta[0]),
                     max(min(max_delta[1], scaled_xyz_action[1]), min_delta[1]),
                     max(min(max_delta[2], scaled_xyz_action[2]), min_delta[2]),
-                    action[3], action[4], action[5],
-                    # 0, 0, 0
                 ])
+
+                if self.only_pos_control:
+                    clamped_action = np.append(clamped_action, [0.0, 0.0, 0.0])
+                else:
+                    clamped_action = np.append(clamped_action, [action[3], action[4], action[5]])
             else:
                 assert False # this seems.... dangerous
 
