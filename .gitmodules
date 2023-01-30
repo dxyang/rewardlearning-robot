@@ -1,0 +1,3 @@
+[submodule "walk_in_the_park"]
+	path = walk_in_the_park
+	url = git@github.com:dxyang/walk_in_the_park.git
