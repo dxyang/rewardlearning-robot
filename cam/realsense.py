@@ -10,6 +10,14 @@ def get_connected_device_sns():
     devices = [d.get_info(rs.camera_info.serial_number) for d in context.devices]
     return devices
 
+def get_connected_device_info():
+    context = rs.context()
+    devices = [
+        {d.get_info(rs.camera_info.name): d.get_info(rs.camera_info.serial_number)} for d in context.devices
+    ]
+    return devices
+
+
 class RealSenseInterface:
     def __init__(self, serial_number: str = None):
         if serial_number is None:
@@ -183,8 +191,18 @@ class RealSenseInterface:
 if __name__ == "__main__":
     import cv2
 
-    rsi = RealSenseInterface()
+    # print all cameras
+    cams = get_connected_device_info()
+    print(f"Currently connected cameras: {cams}")
+    res = input("continue? (y/n)")
+    if res == "n":
+        exit()
+
+    # start camera feed
+    serial_number = "215122255998"
+    rsi = RealSenseInterface(serial_number=serial_number)
     init = True
+
     while True:
         rgb, d = rsi.get_latest_rgbd()
 
@@ -195,8 +213,8 @@ if __name__ == "__main__":
             print(bgr.dtype)
             init = False
 
-        cv2.imshow('RS', bgr)
-        cv2.imshow('d', d)
+        cv2.imshow('RGB', bgr)
+        cv2.imshow('Depth', d)
 
         # Wait for key to shift state
         k = cv2.waitKey(1)
