@@ -12,9 +12,9 @@ import gym
 from gym.spaces import Dict as GymDict
 from polymetis import GripperInterface, RobotInterface
 from scipy.spatial.transform import Rotation as R
+import torchvision.transforms as T
 
 from cam.realsense import RealSenseInterface
-
 from robot.controllers import ResolvedRateControl
 from robot.utils import (
     ROBOT_IP, HOMES, HZ,
@@ -22,6 +22,7 @@ from robot.utils import (
     GRIPPER_MAX_WIDTH, GRIPPER_FORCE, GRIPPER_SPEED,
     Rate
 )
+from r3m import load_r3m
 
 # Silence OpenAI Gym warnings
 gym.logger.setLevel(logging.ERROR)
@@ -344,10 +345,22 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
 
     real robot tasks should inherit from this class and redefine how reward is calculated
     '''
-    def __init__(self, xyz_min: np.ndarray = FRANKA_XYZ_MIN, xyz_max: np.ndarray = FRANKA_XYZ_MAX, **kwargs):
+    def __init__(self, xyz_min: np.ndarray = FRANKA_XYZ_MIN, xyz_max: np.ndarray = FRANKA_XYZ_MAX, use_r3m: bool = False, **kwargs):
         self.xyz_min = xyz_min
         self.xyz_max = xyz_max
         self.action_scale = 0.05
+        self.use_r3m = use_r3m
+        if self.use_r3m:
+            self.r3m = load_r3m("resnet18")
+            self._transforms = T.Compose([
+                T.Resize(256),
+                T.CenterCrop(224),
+                T.ToTensor(), # divides by 255!
+            ])
+            self.torch_device = "cuda"
+            self.r3m.eval()
+            self.r3m.to(self.torch_device)
+
         FrankaEnv.__init__(self, **kwargs)
         assert self.controller == "cartesian"
 
@@ -378,13 +391,19 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
     @property
     def observation_space(self):
         obs_dict = GymDict()
+        base_obs_dim = 14 # eef pose (xyz position xyzw rotation, joint angles)
         if self.use_gripper:
-            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(15,), dtype=np.float32)
-        else:
-            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(14,), dtype=np.float32)
+            base_obs_dim += 1
+
+        obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(base_obs_dim,), dtype=np.float32)
 
         if self.use_camera:
             obs_dict["rgb_image"] = gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8) # HWC
+            if self.use_r3m:
+                # resnet18 - 512, resnet50 - 2048
+                r3m_embedding_dim = 512
+                obs_dict["r3m_vec"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(r3m_embedding_dim,), dtype=np.float32)
+                obs_dict["r3m_with_ppc"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(base_obs_dim + r3m_embedding_dim,), dtype=np.float32)
 
         return obs_dict
 
@@ -399,6 +418,16 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
 
         if self.use_camera:
             new_obs["rgb_image"] = obs["rgb_image"]
+            if self.use_r3m:
+                # convert from hwc to bchw
+                bchw_img = np.expand_dims(np.transpose(obs["rgb_image"], (2, 0, 1)), axis=0)
+                processed_image = self._transforms(bchw_img).to(self.torch_device)
+                with torch.no_grad():
+                    embedding = self.r3m(processed_image * 255.0) # r3m expects input to be 0-255
+                r3m_embedding = embedding.cpu().squeeze().numpy()
+                r3m_with_ppc = np.concatenate([r3m_embedding, state_obs])
+                new_obs["r3m_vec"] = r3m_embedding
+                new_obs["r3m_with_ppc"] = r3m_with_ppc
 
         return new_obs
 
