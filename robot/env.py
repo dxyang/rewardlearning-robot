@@ -9,9 +9,11 @@ import grpc
 import numpy as np
 import torch
 import gym
+from gym.spaces import Dict as GymDict
 from polymetis import GripperInterface, RobotInterface
 from scipy.spatial.transform import Rotation as R
 
+from cam.realsense import RealSenseInterface
 
 from robot.controllers import ResolvedRateControl
 from robot.utils import (
@@ -23,6 +25,11 @@ from robot.utils import (
 
 # Silence OpenAI Gym warnings
 gym.logger.setLevel(logging.ERROR)
+
+def normalize_gripper(val):
+    # normalize gripper such that 1 is fully open and 0 is closed
+    normalized = val / GRIPPER_MAX_WIDTH
+    return max(min(normalized, 1.0), 0.0)
 
 """
 wrapper that addds the resolved rate controller + changes quaternion order to xyzw
@@ -78,6 +85,7 @@ class FrankaEnv(gym.Env):
         controller: str = "cartesian",
         mode: str = "default",
         use_camera: bool = False,
+        cam_serial_str: str = None,
         use_gripper: bool = False,
     ) -> None:
         """
@@ -100,11 +108,32 @@ class FrankaEnv(gym.Env):
         self.robot, self.kp, self.kpd = None, None, None
         self.use_gripper, self.gripper, self.current_gripper_state, self.gripper_is_open = use_gripper, None, None, True
 
-        if use_camera:
-            raise NotImplementedError("Camera support not yet implemented!")
+        self.use_camera = use_camera
+        if self.use_camera:
+            self.rgb, self.d = None, None
+            self.cam = RealSenseInterface(serial_number=cam_serial_str)
 
         # Initialize Robot and PD Controller
-        self.reset()
+        obs = self.reset()
+
+        '''
+        q: (7,) (float32)
+        qdot: (7,) (float32)
+        delta_q: (7,) (float32)
+        ee_pose: (7,) (float32)
+        delta_ee_pose: (7,) (float32)
+        gripper_width: 0.07800412178039551 (<class 'float'>)      # use_gripper = True
+        gripper_max_width: 0.07867326587438583 (<class 'float'>)  # use_gripper = True
+        gripper_open: True (<class 'bool'>)                       # use_gripper = True
+        rgb_image: (480, 640, 3) (uint8)                          # use_camera = True
+        d_image: (480, 640) (uint16)                              # use_camera = True
+        '''
+        print(f"---base robot env observation space")
+        for k, v in obs.items():
+            if type(v) == np.ndarray:
+                print(f"{k}: {v.shape} ({v.dtype})")
+            else:
+                print(f"{k}: {v} ({type(v)})")
 
     def robot_setup(self, home: str = "default", franka_ip: str = ROBOT_IP) -> None:
         # Initialize Robot Interface and Reset to Home
@@ -147,6 +176,9 @@ class FrankaEnv(gym.Env):
             self.current_gripper_state = {"width": gripper_state.width, "max_width": gripper_state.max_width}
             self.gripper_is_open = True
 
+    def process_obs(self, obs):
+        # child classes could do something fancier with the obs dict
+        return obs
 
     def reset(self) -> Dict[str, np.ndarray]:
         # Set PD Gains -- kp, kpd -- depending on current mode, controller
@@ -159,7 +191,9 @@ class FrankaEnv(gym.Env):
 
         # Call setup with the new controller...
         self.robot_setup()
-        return self.get_obs()
+
+        obs = self.get_obs()
+        return self.process_obs(obs)
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -168,6 +202,9 @@ class FrankaEnv(gym.Env):
         new_joint_pose = self.robot.get_joint_positions().numpy()
         new_ee_pose = np.concatenate([a.numpy() for a in self.robot.get_ee_pose()])
         new_ee_rot = R.from_quat(new_ee_pose[3:]).as_euler("xyz")
+
+        if self.use_camera:
+            self.rgb, self.d = self.cam.get_latest_rgbd()
 
         if self.use_gripper:
             new_gripper_state = self.gripper.get_state()
@@ -183,6 +220,9 @@ class FrankaEnv(gym.Env):
                 "gripper_max_width": new_gripper_state.max_width,
                 "gripper_open": self.gripper_is_open,
             }
+            if self.use_camera:
+                obs["rgb_image"] = self.rgb
+                obs["d_image"] = self.d
 
             # Bump "current" poses...
             self.current_joint_pose, self.current_ee_pose = new_joint_pose, new_ee_pose
@@ -198,6 +238,9 @@ class FrankaEnv(gym.Env):
                 "ee_pose": new_ee_pose,
                 "delta_ee_pose": new_ee_pose - self.current_ee_pose,
             }
+            if self.use_camera:
+                obs["rgb_image"] = self.rgb
+                obs["d_image"] = self.d
 
             # Bump "current" trackers...
             self.current_joint_pose, self.current_ee_pose, self.current_ee_rot = new_joint_pose, new_ee_pose, new_ee_rot
@@ -251,7 +294,8 @@ class FrankaEnv(gym.Env):
         self.rate.sleep()
 
         # Return observation, Gym default signature...
-        return self.get_obs(), 0, False, None
+        obs = self.get_obs()
+        return self.process_obs(obs), 0, False, None
 
 
     def close(self) -> None:
@@ -261,6 +305,144 @@ class FrankaEnv(gym.Env):
 
         # Garbage collection & sleep just in case...
         del self.robot
-        self.robot = None, None
+        self.robot = None
+
+        if self.use_gripper:
+            del self.gripper
+            self.gripper = None
+
+        if self.use_camera:
+            self.cam.stop()
+            del self.cam
+            self.cam = None
+
         time.sleep(1)
 
+'''
+empirically moved around the arm to figure out where it could reach without probably running into joint lock
+'''
+FRANKA_XYZ_MIN = np.array([
+    0.28, -0.25, 0.14
+])
+FRANKA_XYZ_MAX = np.array([
+    0.64, 0.25, 0.58
+])
+
+class SafeTaskSpaceFrankEnv(FrankaEnv):
+    '''
+    Real franka env that also sandboxes the robot into a safe workspace.
+
+    real robot tasks should inherit from this class and redefine how reward is calculated
+    '''
+    def __init__(self, xyz_min: np.ndarray, xyz_max: np.ndarray, **kwargs):
+        self.xyz_min = xyz_min
+        self.xyz_max = xyz_max
+        FrankaEnv.__init__(**kwargs)
+        assert self.controller == "cartesian"
+
+    @property
+    def action_space(self):
+        if self.controller == "joint":
+            # 7D Joint Angles
+            low = np.array([-np.pi for i in range(7)])
+            hi = np.array([np.pi for i in range(7)])
+        elif self.controller == "cartesian":
+            # 6-DoF (x, y, z, roll, pitch, yaw) (absolute or deltas)
+            low = np.array([-1, -1, -1, -np.pi, -np.pi, -np.pi])
+            hi = np.array([1, 1, 1, np.pi, np.pi, np.pi])
+        elif self.controller == "resolved-rate":
+            # 6D end-effector velocities (deltas) in X/Y/Z/Roll/Pitch/Yaw...
+            low = np.array([float("-inf") for i in range(6)])
+            hi = np.array([float("inf") for i in range(6)])
+        else:
+            raise NotImplementedError(f"Controller mode `{self.controller}` not supported!")
+
+        return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
+
+    @property
+    def observation_space(self):
+        obs_dict = GymDict()
+        if self.use_gripper:
+            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(12,), dtype=np.float32)
+        else:
+            obs_dict["obs"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(13,), dtype=np.float32)
+
+        if self.use_camera:
+            obs_dict["rgb_image"] = gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8) # HWC
+
+        return obs_dict
+
+    def _process_obs(self, obs):
+        new_obs = {}
+        state_obs = np.concatenate([obs["ee_pose"], obs["q"]])
+
+        if self.use_gripper:
+            gripper_val = normalize_gripper(obs["gripper_width"])
+            state_obs = np.concatenate([state_obs, gripper_val])
+        new_obs["obs"] = state_obs
+
+        if self.use_camera:
+            new_obs["rgb_image"] = obs["rgb_image"]
+
+        return new_obs
+
+    def _calculate_reward(self, obs, reward, info):
+        '''
+        note that this will take the processed obs, not the raw obs!
+        '''
+        return reward
+
+    def step(
+        self, action: Optional[np.ndarray], delta: bool = False, open_gripper: Optional[bool] = None
+    ) -> Tuple[Dict[str, np.ndarray], int, bool, None]:
+        curr_ee_xyz = self.current_ee_pose[:3]
+
+        if self.controller == "cartesian":
+            if delta:
+                # delta should keep us within the sandbox
+                max_delta = self.xyz_max - curr_ee_xyz
+                min_delta = curr_ee_xyz - self.xyz_min
+
+                clamped_action = np.array([
+                    np.max(np.min(max_delta[0], action[0]), min_delta[0]),
+                    np.max(np.min(max_delta[1], action[1]), min_delta[1]),
+                    np.max(np.min(max_delta[2], action[2]), min_delta[2]),
+                ])
+            else:
+                # absolute position targets should remain within the sandbox
+                clamped_action = np.array([
+                    np.max(np.min(self.xyz_max[0], action[0]), self.xyz_max[0]),
+                    np.max(np.min(self.xyz_max[1], action[1]), self.xyz_max[1]),
+                    np.max(np.min(self.xyz_max[2], action[2]), self.xyz_max[2]),
+                ])
+        else:
+            raise NotImplementedError(f"Havevn't thought through space clamping for this controller!")
+
+        obs, reward, done, info = super().step(action=clamped_action, delta=delta, open_gripper=open_gripper)
+
+        reward = self._calculate_reward(obs, reward, info)
+
+        return obs, reward, done, info
+
+
+class RealFrankReach(SafeTaskSpaceFrankEnv):
+    def __init__(self, goal, **kwargs):
+        self.goal = goal
+        SafeTaskSpaceFrankEnv.__init__(**kwargs)
+
+    def _calculate_reward(self, obs, reward, info):
+        dist = np.linalg.norm(obs[:3], self.goal)
+        return -dist
+
+
+if __name__ == "__main__":
+    # baseline code to make sure env is working and debug
+    env = FrankaEnv(
+        home="default",
+        hz=HZ,
+        controller="cartesian",
+        mode="default",
+        use_camera=True,
+        use_gripper=True,
+    )
+    env.close()
