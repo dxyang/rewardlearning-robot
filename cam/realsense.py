@@ -101,9 +101,10 @@ class RealSenseInterface:
     def build_pipeline(
         serial_number: str,
         fps: int,
-        color_resolution=(640, 480),
-        depth_resolution=(640, 480),
+        color_resolution=(640, 480), # width, height
+        depth_resolution=(640, 480), # width, height
     ):
+        print(f"[realsense] building pipeline for {serial_number} at {fps} fps with color {color_resolution} and depth {depth_resolution}")
         config = rs.config()
         config.enable_device(serial_number)
         config.enable_stream(
@@ -124,6 +125,7 @@ class RealSenseInterface:
         pipeline = rs.pipeline()
         profile = pipeline.start(config)
         device = profile.get_device()
+        print(f"[realsense] done building pipeline for {serial_number}")
 
         return pipeline, profile, device
 
@@ -182,10 +184,16 @@ if __name__ == "__main__":
     import cv2
 
     rsi = RealSenseInterface()
+    init = True
     while True:
         rgb, d = rsi.get_latest_rgbd()
 
         bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+        if init:
+            print(bgr.shape)
+            print(bgr.dtype)
+            init = False
 
         cv2.imshow('RS', bgr)
         cv2.imshow('d', d)
