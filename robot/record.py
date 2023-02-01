@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import cv2
 import numpy as np
 from tap import Tap
 
@@ -44,6 +45,7 @@ class ArgumentParser(Tap):
     resume: bool = True                                 # Resume demonstration collection (on by default)
 
     plot_trajectory: bool = False                       # generate html plot for visualizing trajectory
+    show_viewer: bool = False
     # fmt: on
 
 
@@ -71,7 +73,8 @@ def demonstrate() -> None:
         controller=args.controller,
         mode="record",
         use_camera=args.include_visual_states,
-        use_gripper=False, # TODO: create some sort of button pressing mechanism to open and close the gripper
+        use_gripper=False, # TODO: create some sort of button pressing mechanism to open and close the gripper,
+        random_reset_home_pose=True
     )
 
     # Initializing Button Control... TODO(siddk) -- switch with ASR
@@ -94,7 +97,7 @@ def demonstrate() -> None:
         env.set_mode("record")
 
         # Reset environment & wait on user input...
-        env.reset()
+        obs = env.reset()
         print(
             "[*] Ready to record!\n"
             f"\tYou have `{args.max_time_per_demo}` secs to complete the demo, and can use (X) to stop recording.\n"
@@ -117,6 +120,12 @@ def demonstrate() -> None:
         #   =>> TODO(siddk) - handle Gripper?
         joint_qs = []
         for _ in range(int(args.max_time_per_demo * HZ) - 1):
+            # visualize if camera
+            if args.show_viewer:
+                bgr = cv2.cvtColor(obs["rgb_image"], cv2.COLOR_RGB2BGR)
+                cv2.imshow('RGB', bgr)
+                cv2.waitKey(1)
+
             # Get Button Input (only if True) --> handle extended button press...
             _, _, x, _ = buttons.input()
 
@@ -159,7 +168,7 @@ def demonstrate() -> None:
         if do_playback:
             # TODO(siddk) -- handle Camera observation logging...
             env.set_mode("default")
-            obs = env.reset()
+            obs = env.reset(use_last_reset_pos=True)
             eef_poses.append(obs["ee_pose"].copy())
             eef_xyzs.append(obs["ee_pose"][:3].copy())
             jas.append(obs["q"].copy())

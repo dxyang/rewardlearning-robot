@@ -37,7 +37,7 @@ def normalize_gripper(val):
 wrapper that addds the resolved rate controller + changes quaternion order to xyzw
 """
 class RobotInterfaceWrapper(RobotInterface):
-    def get_ee_pose(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_ee_pose_with_rot_as_xyzw(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Polymetis defaults to returning a Tuple of (position, orientation), where orientation is a quaternion in
         *scalar-first* format (w, x, y, z). However, `scipy` and other libraries expect *scalar-last* (x, y, z, w);
@@ -89,6 +89,7 @@ class FrankaEnv(gym.Env):
         use_camera: bool = False,
         cam_serial_str: str = None,
         use_gripper: bool = False,
+        random_reset_home_pose: bool = False,
     ) -> None:
         """
         Initialize a *physical* Franka Environment, with the given home pose, PD controller gains, and camera.
@@ -115,6 +116,10 @@ class FrankaEnv(gym.Env):
             self.rgb, self.d = None, None
             self.cam = RealSenseInterface()
 
+        # random offset from "home" pose
+        self.random_reset_home_pose = random_reset_home_pose
+        self._last_random_offset = np.zeros(3)
+
         # Initialize Robot and PD Controller
         obs = self.reset()
 
@@ -137,15 +142,33 @@ class FrankaEnv(gym.Env):
             else:
                 print(f"{k}: {v} ({type(v)})")
 
-    def robot_setup(self, home: str = "default", franka_ip: str = ROBOT_IP) -> None:
+    def robot_setup(self, home: str = "default", franka_ip: str = ROBOT_IP, use_last_reset_pos: bool = False) -> None:
         # Initialize Robot Interface and Reset to Home
         self.robot = RobotInterfaceWrapper(ip_address=franka_ip)
         self.robot.set_home_pose(torch.Tensor(HOMES[home]))
         print(f"Robot going home!")
         self.robot.go_home()
 
+        if self.random_reset_home_pose:
+            if use_last_reset_pos:
+                print(self._last_random_offset)
+                xyz_delta = self._last_random_offset
+            else:
+                pos_xyz, rot_xyzw = self.robot.get_ee_pose_with_rot_as_xyzw()
+                x_magnitude = 0.1
+                y_magnitude = 0.25
+                xyz_delta = torch.Tensor([
+                    (np.random.random() * 2.0 - 1) * x_magnitude,
+                    (np.random.random() * 2.0 - 1) * y_magnitude,
+                    0.0
+                ])
+                # xyz_delta = np.zeros(3)
+                self._last_random_offset = torch.clone(xyz_delta)
+            print(f"Robot going to delta {xyz_delta}, flag: {use_last_reset_pos}!")
+            self.robot.move_to_ee_pose(position=xyz_delta, delta=True)
+
         # Initialize current joint & EE poses...
-        self.current_ee_pose = np.concatenate([a.numpy() for a in self.robot.get_ee_pose()])
+        self.current_ee_pose = np.concatenate([a.numpy() for a in self.robot.get_ee_pose_with_rot_as_xyzw()])
         self.current_ee_rot = R.from_quat(self.current_ee_pose[3:]).as_euler("xyz")
         self.current_joint_pose = self.robot.get_joint_positions().numpy()
 
@@ -182,7 +205,7 @@ class FrankaEnv(gym.Env):
         # child classes could do something fancier with the obs dict
         return obs
 
-    def reset(self) -> Dict[str, np.ndarray]:
+    def reset(self, use_last_reset_pos: bool = False) -> Dict[str, np.ndarray]:
         # Set PD Gains -- kp, kpd -- depending on current mode, controller
         if self.controller == "joint":
             self.kp, self.kpd = KQ_GAINS[self.mode], KQD_GAINS[self.mode]
@@ -192,7 +215,7 @@ class FrankaEnv(gym.Env):
             self.kp = KRR_GAINS[self.mode]
 
         # Call setup with the new controller...
-        self.robot_setup()
+        self.robot_setup(use_last_reset_pos=use_last_reset_pos)
 
         obs = self.get_obs()
         return self._process_obs(obs)
@@ -202,7 +225,7 @@ class FrankaEnv(gym.Env):
 
     def get_obs(self) -> Dict[str, np.ndarray]:
         new_joint_pose = self.robot.get_joint_positions().numpy()
-        new_ee_pose = np.concatenate([a.numpy() for a in self.robot.get_ee_pose()])
+        new_ee_pose = np.concatenate([a.numpy() for a in self.robot.get_ee_pose_with_rot_as_xyzw()])
         new_ee_rot = R.from_quat(new_ee_pose[3:]).as_euler("xyz")
 
         if self.use_camera:
@@ -495,6 +518,15 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
 
 
 class SimpleRealFrankReach(SafeTaskSpaceFrankEnv):
+    def __init__(self, goal, **kwargs):
+        self.goal = goal
+        SafeTaskSpaceFrankEnv.__init__(self, **kwargs)
+
+    def _calculate_reward(self, obs, reward, info):
+        dist = np.linalg.norm(obs['obs'][:3] - self.goal)
+        return -dist
+
+class LrfRealFrankaReach(SafeTaskSpaceFrankEnv):
     def __init__(self, goal, **kwargs):
         self.goal = goal
         SafeTaskSpaceFrankEnv.__init__(self, **kwargs)
