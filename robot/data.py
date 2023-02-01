@@ -2,6 +2,7 @@ import os
 
 import h5py
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 
 class RoboDemoDset(Dataset):
@@ -79,7 +80,42 @@ class RoboDemoDset(Dataset):
 
     def _process_rgb_to_r3m_vecs(self):
         # call this to generate r3m vector embeddings for all rgb images in this dataset
+        from r3m import load_r3m
+        import torchvision.transforms as T
+
+        r3m_net = load_r3m("resnet50") # resnet18
+        transforms = T.Compose([
+            T.ToTensor(), # divides by 255, will also convert to chw
+            T.Resize(256),
+            T.CenterCrop(224),
+        ])
+        torch_device = "cuda"
+        r3m_net.eval()
+        r3m_net.to(torch_device)
+
+        for traj_idx in range(self.length):
+            imgs = self.f[str(traj_idx)]["rgb"][:]
+
+            img_tensors = [transforms(img).unsqueeze(0) for img in imgs]
+            img_batch = torch.cat(img_tensors, axis=0).to(torch_device)
+            with torch.no_grad():
+                embeddings_batch = r3m_net(img_batch * 255.0)
+
+            embeddings_batch_np = embeddings_batch.cpu().numpy()
+            grp = self.f[str(traj_idx)]
+            if "r3m_vec" in grp:
+                del grp["r3m_vec"]
+            grp.create_dataset("r3m_vec", shape=embeddings_batch_np.shape, dtype=np.float32)
+            grp["r3m_vec"][:] = embeddings_batch_np
+
         return
 
 if __name__ == "__main__":
-    pass
+    from pathlib import Path
+    demo_root = Path.cwd() / "data/demos"
+    demo_name = "test"
+    data_path = demo_root / demo_name / "demos.hdf"
+
+    dset = RoboDemoDset(save_path=data_path, read_only_if_exists=False)
+    dset._process_rgb_to_r3m_vecs()
+    import pdb; pdb.set_trace()

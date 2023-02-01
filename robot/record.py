@@ -43,7 +43,7 @@ class ArgumentParser(Tap):
     controller: str = "joint"                           # Demonstration & playback uses a Joint Impedance controller...
     resume: bool = True                                 # Resume demonstration collection (on by default)
 
-    plot_trajectory: bool = True                       # generate html plot for visualizing trajectory
+    plot_trajectory: bool = False                       # generate html plot for visualizing trajectory
     # fmt: on
 
 
@@ -60,7 +60,7 @@ def demonstrate() -> None:
 
     # data saving yay
     video_recorder = VideoRecorder(save_dir = demo_rgb_dir, fps=HZ)
-    h5py_dset_path = args.data_dir / args.task / "demos.h5py"
+    h5py_dset_path = args.data_dir / args.task / "demos.hdf"
     dset = RoboDemoDset(save_path=h5py_dset_path, read_only_if_exists=False)
 
     # Initialize environment in `record` mode...
@@ -216,9 +216,9 @@ def demonstrate() -> None:
             save_str = str(demo_index).zfill(3)
             video_recorder.save(f"{save_str}.mp4")
 
-            rgb_np = np.array(rgbs) # horizon, h, w, c
-            ja_np = np.array(jas) # horizon, 7
-            eefpose_np = np.array(eef_poses) # horizon, 7
+            rgb_np = np.expand_dims(np.array(rgbs), axis=0) # 1, horizon, h, w, c
+            ja_np = np.expand_dims(np.array(jas), axis=0) # 1, horizon, 7
+            eefpose_np = np.expand_dims(np.array(eef_poses), axis=0) # 1, horizon, 7
 
             dset.add_traj(rgbs=rgb_np, joint_angles=ja_np, eef_poses=eefpose_np)
             demo_index += 1
