@@ -113,7 +113,7 @@ class FrankaEnv(gym.Env):
         self.use_camera = use_camera
         if self.use_camera:
             self.rgb, self.d = None, None
-            self.cam = RealSenseInterface(serial_number=cam_serial_str)
+            self.cam = RealSenseInterface()
 
         # Initialize Robot and PD Controller
         obs = self.reset()
@@ -313,10 +313,7 @@ class FrankaEnv(gym.Env):
             del self.gripper
             self.gripper = None
 
-        if self.use_camera:
-            self.cam.stop()
-            del self.cam
-            self.cam = None
+        # note we don't kill the camera here since we just want it to stay on
 
         time.sleep(1)
 
@@ -360,7 +357,7 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         self.use_r3m = use_r3m
         self.only_pos_control = only_pos_control
         if self.use_r3m:
-            self.r3m = load_r3m("resnet18")
+            self.r3m = load_r3m("resnet50") # resnet18
             self._transforms = T.Compose([
                 T.Resize(256),
                 T.CenterCrop(224),
@@ -413,7 +410,7 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
             obs_dict["rgb_image"] = gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8) # HWC
             if self.use_r3m:
                 # resnet18 - 512, resnet50 - 2048
-                r3m_embedding_dim = 512
+                r3m_embedding_dim = 2048
                 obs_dict["r3m_vec"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(r3m_embedding_dim,), dtype=np.float32)
                 obs_dict["r3m_with_ppc"] = gym.spaces.Box(low=float("-inf"), high=float("inf"), shape=(base_obs_dim + r3m_embedding_dim,), dtype=np.float32)
 
@@ -505,6 +502,7 @@ class SimpleRealFrankReach(SafeTaskSpaceFrankEnv):
     def _calculate_reward(self, obs, reward, info):
         dist = np.linalg.norm(obs['obs'][:3] - self.goal)
         return -dist
+
 
 
 if __name__ == "__main__":

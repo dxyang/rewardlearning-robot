@@ -21,7 +21,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from tap import Tap
 
+from cam.utils import VideoRecorder
+
 from robot import FrankaEnv
+from robot.data import RoboDemoDset
 from robot.utils import HZ
 from robot.joystick_controller import Buttons
 
@@ -32,7 +35,7 @@ class ArgumentParser(Tap):
     data_dir: Path = Path("data/demos/")                # Path to parent directory for saving demonstrations
 
     # Task Parameters
-    include_visual_states: bool = False                 # Whether to run playback/get visual states (only False for now)
+    include_visual_states: bool = True                 # Whether to run playback/get visual states (only False for now)
     max_time_per_demo: int = 15                         # Max time (in seconds) to record demo -- default = 21 seconds
 
     # Collection Parameters
@@ -55,6 +58,11 @@ def demonstrate() -> None:
         demo_rgb_dir = args.data_dir / args.task / "playback-rgb"
         os.makedirs(demo_rgb_dir, exist_ok=args.resume)
 
+    # data saving yay
+    video_recorder = VideoRecorder(save_dir = demo_rgb_dir, fps=HZ)
+    h5py_dset_path = args.data_dir / args.task / "demos.h5py"
+    dset = RoboDemoDset(save_path=h5py_dset_path, read_only_if_exists=False)
+
     # Initialize environment in `record` mode...
     print("[*] Initializing Robot Connection...")
     env = FrankaEnv(
@@ -62,8 +70,8 @@ def demonstrate() -> None:
         hz=HZ,
         controller=args.controller,
         mode="record",
-        use_camera=False,
-        use_gripper=False,
+        use_camera=args.include_visual_states,
+        use_gripper=False, # TODO: create some sort of button pressing mechanism to open and close the gripper
     )
 
     # Initializing Button Control... TODO(siddk) -- switch with ASR
@@ -90,17 +98,17 @@ def demonstrate() -> None:
         print(
             "[*] Ready to record!\n"
             f"\tYou have `{args.max_time_per_demo}` secs to complete the demo, and can use (X) to stop recording.\n"
-            "\tPress (Y) to reset, and (A) to start recording!\n "
+            "\tPress (Y) to quit, and (A) to start recording!\n "
         )
 
         # Loop on valid button input...
-        a, _, _, y = buttons.input()
+        a, _, x, y = buttons.input()
         while not a and not y:
             a, _, _, y = buttons.input()
 
-        # Reset if (Y)...
+        # Quit if (Y)...
         if y:
-            continue
+            break
 
         # Go, go, go!
         print("\t=>> Started recording... press (X) to terminate recording!")
@@ -144,12 +152,19 @@ def demonstrate() -> None:
                 do_playback = False
 
         # Special Playback Handling -- change gains, and replay!
+        jas = []
+        eef_poses = []
+        rgbs = []
         eef_xyzs = []
         if do_playback:
             # TODO(siddk) -- handle Camera observation logging...
             env.set_mode("default")
             obs = env.reset()
-            eef_xyzs.append(obs["ee_pose"][:3])
+            eef_poses.append(obs["ee_pose"].copy())
+            eef_xyzs.append(obs["ee_pose"][:3].copy())
+            jas.append(obs["q"].copy())
+            rgbs.append(obs["rgb_image"].copy())
+
 
             # Block on User Ready -- Robot will move, so this is for safety...
             print("\tReady to playback! Get out of the way, and hit (A) to continue...")
@@ -161,7 +176,10 @@ def demonstrate() -> None:
             print("\tReplaying...")
             for idx in range(len(joint_qs)):
                 obs, _, _, _ = env.step(joint_qs[idx])
-                eef_xyzs.append(obs["ee_pose"][:3])
+                eef_poses.append(obs["ee_pose"].copy())
+                eef_xyzs.append(obs["ee_pose"][:3].copy())
+                jas.append(obs["q"].copy())
+                rgbs.append(obs["rgb_image"].copy())
 
             # Close Environment
             env.close()
@@ -177,7 +195,7 @@ def demonstrate() -> None:
             scene.plot_scene_to_html("test")
 
         # Move on?
-        print("Next? Press (A) to continue or (Y) to quit... or (X) to retry demo and skip save")
+        print("Next? Press (A) to save and continue or (Y) to quit without saving or (X) to retry demo and skip save")
 
         # Loop on valid button input...
         a, _, x, y = buttons.input()
@@ -190,6 +208,19 @@ def demonstrate() -> None:
 
         # Bump Index
         if not x:
+            for frame_idx, rgb_frame in enumerate(rgbs):
+                if frame_idx == 0:
+                    video_recorder.init(rgb_frame)
+                else:
+                    video_recorder.record(rgb_frame)
+            save_str = str(demo_index).zfill(3)
+            video_recorder.save(f"{save_str}.mp4")
+
+            rgb_np = np.array(rgbs) # horizon, h, w, c
+            ja_np = np.array(jas) # horizon, 7
+            eefpose_np = np.array(eef_poses) # horizon, 7
+
+            dset.add_traj(rgbs=rgb_np, joint_angles=ja_np, eef_poses=eefpose_np)
             demo_index += 1
 
     # And... that's all folks!
