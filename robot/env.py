@@ -102,6 +102,7 @@ class FrankaEnv(gym.Env):
         :param use_gripper: Boolean whether to initialize the Gripper controller (default: False)
         """
         self.home = home
+        self.hz = hz
         self.rate = Rate(hz)
         self.mode = mode
         self.controller = controller
@@ -376,7 +377,7 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
     ):
         self.xyz_min = xyz_min
         self.xyz_max = xyz_max
-        self.action_scale = 0.05
+        self.action_scale = 0.1
         self.use_r3m = use_r3m
         self.only_pos_control = only_pos_control
         if self.use_r3m:
@@ -527,14 +528,22 @@ class SimpleRealFrankReach(SafeTaskSpaceFrankEnv):
         return -dist
 
 class LrfRealFrankaReach(SafeTaskSpaceFrankEnv):
-    def __init__(self, goal, **kwargs):
-        self.goal = goal
+    from reward_extraction.reward_functions import RobotLearnedRewardFunction
+
+    def __init__(self, **kwargs):
+        self.lrf = None
         SafeTaskSpaceFrankEnv.__init__(self, **kwargs)
 
-    def _calculate_reward(self, obs, reward, info):
-        dist = np.linalg.norm(obs['obs'][:3] - self.goal)
-        return -dist
+    def set_lrf(self, lrf: RobotLearnedRewardFunction):
+        print(f"learned reward function set!")
+        self.lrf = lrf
 
+    def _calculate_reward(self, obs, reward, info):
+        assert self.lrf is not None
+
+        state = torch.from_numpy(obs["r3m_vec"]).float()
+        reward = self.lrf._calculate_reward(state)
+        return reward
 
 
 if __name__ == "__main__":
