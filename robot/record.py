@@ -24,7 +24,7 @@ from tap import Tap
 
 from cam.utils import VideoRecorder
 
-from robot import FrankaEnv
+from robot.env import FrankaEnv
 from robot.data import RoboDemoDset
 from robot.utils import HZ
 from robot.joystick_controller import Buttons

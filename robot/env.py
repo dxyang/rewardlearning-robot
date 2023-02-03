@@ -355,7 +355,7 @@ class FrankaEnv(gym.Env):
 empirically moved around the arm to figure out where it could reach without probably running into joint lock
 '''
 FRANKA_XYZ_MIN = np.array([
-    0.28, -0.25, 0.16
+    0.28, -0.25, 0.25        # safe to set z min to 0.16, but let's make sure we don't crush a box
 ])
 FRANKA_XYZ_MAX = np.array([
     0.7, 0.25, 0.58
