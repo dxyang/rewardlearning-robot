@@ -58,16 +58,15 @@ class LearnedRewardFunction():
 
             self.train_step += 1
 
-            if self.train_step % self.plot_and_save_frequency == 0:
-                self.train_steps.append(self.train_step)
-                self.losses.append(np.mean(self.running_loss))
-                self.losses_same_traj.append(np.mean(self.running_loss_same_traj))
-                self.losses_std.append(np.std(self.running_loss))
-                self.losses_std_same_traj.append(np.std(self.running_loss_same_traj))
-                self.running_loss = []
-                self.running_loss_same_traj = []
-                self.plot_losses()
-                self.save_models()
+        # do the plot and save thing
+        self.train_steps.append(self.train_step)
+        self.losses.append(np.mean(self.running_loss))
+        self.losses_same_traj.append(np.mean(self.running_loss_same_traj))
+        self.losses_std.append(np.std(self.running_loss))
+        self.losses_std_same_traj.append(np.std(self.running_loss_same_traj))
+        self.running_loss = []
+        self.running_loss_same_traj = []
+        self.plot_losses()
 
     def plot_losses(self):
         losses = np.array(self.losses)
@@ -192,7 +191,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
             assert self.disable_ranking
 
         # training parameters
-        self.batch_size = 128
+        self.batch_size = 64
         self.lr = 1e-4
 
         # network definitions
@@ -226,7 +225,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
 
         # bookkeeping
         self.train_step = 0
-        self.plot_and_save_frequency = 100
+        self.plot_and_save_frequency = 40
         self.train_steps = []
         self.losses = []
         self.losses_same_traj = []
@@ -243,7 +242,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         train the ranking function a bit so it isn't oututting purely 0 during robot exploration
         '''
         ranking_init_losses = []
-        num_init_steps = 1000
+        num_init_steps = 200
         for _ in tqdm(range(num_init_steps)):
             if not self.disable_ranking:
                 self.ranking_optimizer.zero_grad()
@@ -260,6 +259,8 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         plt.plot([t for t in range(num_init_steps)], ranking_init_losses)
         plt.savefig(f"{self.exp_dir}/ranking_init_loss.png")
 
+    def last_pmr(self):
+        return self.progress, self.mask, self.reward
 
     def _calculate_reward(self, x, dbg: bool = False):
         x = x.to(device)
@@ -277,13 +278,22 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
             self.train_mode()
 
         if not self._seen_on_policy_data:
+            self.mask = 0.0
+            self.progress = progress
+            self.reward = progress
+
             # just progress as reward until we've seen on policy data for classifier
             return progress
+
+        self.mask = mask
+        self.progress = progress
+        self.reward = reward
 
         if dbg:
             return progress, mask, reward
         else:
             return reward
+
 
     def _train_ranking_step(self):
         '''
@@ -376,10 +386,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         if not os.path.exists(plot_dir):
             os.makedirs(plot_dir, exist_ok=True)
 
-
         aggregate_ps, aggregate_ms, aggregate_rs = [], [], []
-
-
         for traj_idx, traj in enumerate(self.expert_data):
             r3m_vecs = torch.from_numpy(traj["r3m_vec"]) # horizon x embedding_dim
             progress, mask, reward = self._calculate_reward(r3m_vecs, dbg=True)
@@ -395,7 +402,6 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
             traj_idx_str = str(traj_idx).zfill(3)
             plt.legend()
             plt.savefig(f"{plot_dir}/{traj_idx_str}_pmr.png")
-
 
         plt.clf(); plt.cla()
         for p in aggregate_ps:
