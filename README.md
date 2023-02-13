@@ -10,7 +10,7 @@ git submodule init
 git submodule update
 
 # create the conda python environment, install most dependencies
-conda env create -f env.yml
+conda env create -f environment.yml
 pip install --upgrade pip
 
 # install pytorch
