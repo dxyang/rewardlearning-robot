@@ -112,11 +112,12 @@ class RoboDemoDset(Dataset):
 
 if __name__ == "__main__":
     from tap import Tap
+    from pathlib import Path
+
     class ArgumentParser(Tap):
         task: str                                           # Task ID for demonstration collection
 
     args = ArgumentParser().parse_args()
-    from pathlib import Path
     demo_root = Path.cwd() / "data/demos"
     data_path = demo_root / args.task / "demos.hdf"
 

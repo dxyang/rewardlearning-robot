@@ -25,6 +25,8 @@ from robot.utils import (
 )
 from r3m import load_r3m
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 # Silence OpenAI Gym warnings
 gym.logger.setLevel(logging.ERROR)
 
@@ -351,6 +353,15 @@ class FrankaEnv(gym.Env):
         """Return current EE orientation as euler angles (in radians) --> 3D roll/pitch/yaw!"""
         return self.current_ee_rot
 
+    @property
+    def image_space(self):
+        return gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8) # HWC
+
+    def get_image(self):
+        assert self.use_camera
+        return self.rgb
+
+
 '''
 empirically moved around the arm to figure out where it could reach without probably running into joint lock
 '''
@@ -372,24 +383,28 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         xyz_min: np.ndarray = FRANKA_XYZ_MIN,
         xyz_max: np.ndarray = FRANKA_XYZ_MAX,
         use_r3m: bool = False,
+        r3m_net: torch.nn.Module = None,
         only_pos_control: bool = True,
         **kwargs
     ):
         self.xyz_min = xyz_min
         self.xyz_max = xyz_max
-        self.action_scale = 0.1
+        self.action_scale = 0.05
         self.use_r3m = use_r3m
         self.only_pos_control = only_pos_control
         if self.use_r3m:
-            self.r3m = load_r3m("resnet50") # resnet18
             self._transforms = T.Compose([
                 T.Resize(256),
                 T.CenterCrop(224),
                 T.ToTensor(), # divides by 255, will also convert to chw
             ])
-            self.torch_device = "cuda"
-            self.r3m.eval()
-            self.r3m.to(self.torch_device)
+            if r3m_net is None:
+                assert False
+                self.r3m = load_r3m("resnet50") # resnet18
+                self.r3m.eval()
+                self.r3m.to(device)
+            else:
+                self.r3m = r3m_net
 
         FrankaEnv.__init__(self, **kwargs)
         assert self.controller == "cartesian"
@@ -454,7 +469,7 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
             if self.use_r3m:
                 # convert from hwc to bchw
                 pil_img = Image.fromarray(obs["rgb_image"])
-                processed_image = self._transforms(pil_img).unsqueeze(0).to(self.torch_device)
+                processed_image = self._transforms(pil_img).unsqueeze(0).to(device)
                 with torch.no_grad():
                     embedding = self.r3m(processed_image * 255.0) # r3m expects input to be 0-255
                 r3m_embedding = embedding.cpu().squeeze().numpy()

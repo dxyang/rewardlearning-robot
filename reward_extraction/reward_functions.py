@@ -19,11 +19,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
+import torchvision.transforms as T
 from tqdm import tqdm
 
 # from drqv2.replay_buffer import ReplayBuffer
 # from drqv2.video import VideoRecorder
 from rl.data.replay_buffer import ReplayBuffer
+from r3m import load_r3m
 
 from reward_extraction.models import Policy
 from reward_extraction.utils import mixup_criterion, mixup_data
@@ -160,6 +162,8 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         disable_ranking: bool = False, # GAIL / AIRL
         train_classifier_with_goal_state_only: bool = False, # VICE,.
         load_hdf_into_ram: bool = True,
+        obs_is_image: bool = True,
+        r3m_net: torch.nn.Module = None,
     ):
         '''
         Learns:
@@ -185,6 +189,14 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         self.add_state_noise = add_state_noise
         self.disable_ranking = disable_ranking
         self.obs_size = obs_size
+        self.obs_is_image = obs_is_image
+
+        if r3m_net is None:
+            self.r3m_net = load_r3m("resnet50") # resnet18
+            self.r3m_net.eval()
+            self.r3m_net.to("cuda")
+        else:
+            self.r3m_net = r3m_net
 
         self.train_classifier_with_goal_state_only = train_classifier_with_goal_state_only
         if self.train_classifier_with_goal_state_only:
@@ -234,8 +246,11 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         self.running_loss = []
         self.running_loss_same_traj = []
 
+        self.set_image_transforms()
+
         # train the ranking function so it's not giving junk for exploration
         self.init_ranking()
+
 
     def init_ranking(self):
         '''
@@ -294,6 +309,19 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         else:
             return reward
 
+    def set_image_transforms(self):
+        self._train_transforms = T.Compose([
+                T.Resize(256),
+                T.ColorJitter(),
+                T.RandomRotation(15), # +/-15 degrees of random rotation
+                T.RandomCrop(224), # T.CenterCrop(224)
+        ])
+
+        self._test_transforms = T.Compose([
+                T.Resize(256),
+                T.CenterCrop(224),
+        ])
+
 
     def _train_ranking_step(self):
         '''
@@ -306,8 +334,30 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         first_before = np.where(expert_t_idxs < expert_other_t_idxs)[0]
         labels[first_before] = 1.0 # idx is 1.0 if other timestep > timestep
 
-        expert_states_t_np = np.concatenate([self.expert_data[traj_idx]["r3m_vec"][t_idx][None] for (traj_idx, t_idx) in zip(expert_idxs, expert_t_idxs)])
-        expert_states_other_t_np = np.concatenate([self.expert_data[traj_idx]["r3m_vec"][t_idx][None] for (traj_idx, t_idx) in zip(expert_idxs, expert_other_t_idxs)])
+        if self.obs_is_image:
+            # get images
+            expert_images_t_tensor = torch.cat(
+                [T.ToTensor()(self.expert_data[traj_idx]["rgb"][t_idx]).unsqueeze(0) for (traj_idx, t_idx) in zip(expert_idxs, expert_t_idxs)],
+                dim=0
+            ).to(device)
+            expert_other_images_t_tensor = torch.cat(
+                [T.ToTensor()(self.expert_data[traj_idx]["rgb"][t_idx]).unsqueeze(0) for (traj_idx, t_idx) in zip(expert_idxs, expert_other_t_idxs)],
+                dim=0
+            ).to(device)
+
+            # apply data augmentation and convert into form ready for r3m
+            expert_processed_images_t_tensor = self._train_transforms(expert_images_t_tensor)
+            expert_processed_images_other_t_tensor = self._train_transforms(expert_other_images_t_tensor)
+
+            # convert to r3m vec
+            with torch.no_grad():
+                expert_states_t_tensor = self.r3m_net(expert_processed_images_t_tensor * 255.0) # r3m expects input to be 0-255
+                expert_states_other_t_tensor = self.r3m_net(expert_processed_images_other_t_tensor * 255.0) # r3m expects input to be 0-255
+            expert_states_t_np = expert_states_t_tensor.cpu().squeeze().numpy()
+            expert_states_other_t_np = expert_states_other_t_tensor.cpu().squeeze().numpy()
+        else:
+            expert_states_t_np = np.concatenate([self.expert_data[traj_idx]["r3m_vec"][t_idx][None] for (traj_idx, t_idx) in zip(expert_idxs, expert_t_idxs)])
+            expert_states_other_t_np = np.concatenate([self.expert_data[traj_idx]["r3m_vec"][t_idx][None] for (traj_idx, t_idx) in zip(expert_idxs, expert_other_t_idxs)])
 
         if self.add_state_noise:
             expert_states_t_np += np.random.normal(0, 0.01, size=expert_states_t_np.shape)
@@ -349,8 +399,26 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         '''
         sample from replay buffer data (batch size) (counterfactuals) => train classifier negatives
         '''
-        batch = self.replay_buffer.sample(batch_size=self.batch_size)
-        rb_cf_states = batch["observations"][:, :self.obs_size]
+        batch, image_batch = self.replay_buffer.sample(batch_size=self.batch_size)
+
+        if self.obs_is_image:
+            # get images and apply data augmentation
+            rb_images_tensor = torch.cat(
+                [T.ToTensor()(img).unsqueeze(0) for img in image_batch],
+                dim=0
+            ).to(device)
+
+            rb_processed_images = self._train_transforms(rb_images_tensor)
+
+            # convert to r3m vec
+            with torch.no_grad():
+                rb_image_vecs = self.r3m_net(rb_processed_images * 255.0) # r3m expects input to be 0-255
+            rb_cf_states = rb_image_vecs.cpu().squeeze().numpy()
+        else:
+            rb_cf_states = batch["observations"][:, :self.obs_size]
+
+        if self.add_state_noise:
+            rb_cf_states += np.random.normal(0, 0.01, size=rb_cf_states.shape)
 
         '''
         combine the counterfactals
@@ -388,7 +456,12 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
 
         aggregate_ps, aggregate_ms, aggregate_rs = [], [], []
         for traj_idx, traj in enumerate(self.expert_data):
-            r3m_vecs = torch.from_numpy(traj["r3m_vec"]) # horizon x embedding_dim
+            rgb_imgs = traj["rgb"] # horizon x embedding_dim
+            rgb_img_tensor_batch = torch.cat([T.ToTensor()(rgb).unsqueeze(0) for rgb in rgb_imgs], dim=0)
+            processed_imgs = self._test_transforms(rgb_img_tensor_batch)
+            with torch.no_grad():
+                r3m_vecs = self.r3m_net(processed_imgs * 255.0) # r3m expects input to be 0-255
+
             progress, mask, reward = self._calculate_reward(r3m_vecs, dbg=True)
             aggregate_ps.append(progress.copy())
             aggregate_ms.append(mask.copy())
