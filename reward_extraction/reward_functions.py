@@ -25,6 +25,7 @@ from tqdm import tqdm
 # from drqv2.replay_buffer import ReplayBuffer
 # from drqv2.video import VideoRecorder
 from rl.data.replay_buffer import ReplayBuffer
+from rl.data.image_buffer import RAMImageReplayBuffer
 from r3m import load_r3m
 
 from reward_extraction.models import Policy
@@ -156,6 +157,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         exp_dir: str,
         demo_path: str,
         replay_buffer: ReplayBuffer,
+        image_replay_buffer: RAMImageReplayBuffer,
         horizon: int,
         train_classify_with_mixup: bool = True,
         add_state_noise: bool = True,
@@ -233,6 +235,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
 
         # replay buffer
         self.replay_buffer = replay_buffer
+        self.image_replay_buffer = image_replay_buffer
         self._seen_on_policy_data = False
 
         # bookkeeping
@@ -399,7 +402,8 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         '''
         sample from replay buffer data (batch size) (counterfactuals) => train classifier negatives
         '''
-        batch, image_batch = self.replay_buffer.sample(batch_size=self.batch_size)
+        batch = self.replay_buffer.sample(batch_size=self.batch_size)
+        image_batch = self.image_replay_buffer.sample(batch_size=self.batch_size)
 
         if self.obs_is_image:
             # get images and apply data augmentation
