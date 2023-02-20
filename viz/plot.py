@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import torch
 import visdom
 
 def plot_transform(
@@ -183,6 +184,9 @@ class VisdomVisualizer():
 
     def plot_rgb(self, rgb_hwc: np.array, window_name: str):
         self.vis.image(rgb_hwc.transpose((2, 0, 1)), win=window_name, env=self.env)
+
+    def plot_rgb_batch(self, rgb_bchw: torch.Tensor, nrow: int, window_name: str):
+        self.vis.images(rgb_bchw, nrow=nrow, win=window_name, env=self.env, opts={"caption": window_name})
 
     def plot_depth(self, depth: np.array, window_name: str):
         depth_normalized = depth.squeeze() / np.max(depth) * 255
