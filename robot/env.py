@@ -371,6 +371,7 @@ FRANKA_XYZ_MIN = np.array([
 FRANKA_XYZ_MAX = np.array([
     0.7, 0.25, 0.58
 ])
+FRANKA_STEP_MAX = 0.1
 
 class SafeTaskSpaceFrankEnv(FrankaEnv):
     '''
@@ -389,7 +390,7 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
     ):
         self.xyz_min = xyz_min
         self.xyz_max = xyz_max
-        self.action_scale = 0.05
+        self.action_scale = FRANKA_STEP_MAX
         self.use_r3m = use_r3m
         self.only_pos_control = only_pos_control
         if self.use_r3m:

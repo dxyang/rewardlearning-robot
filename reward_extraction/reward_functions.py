@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from torch import optim
 import torchvision.transforms as T
 from tqdm import tqdm
+import visdom
 
 # from drqv2.replay_buffer import ReplayBuffer
 # from drqv2.video import VideoRecorder
@@ -30,8 +31,8 @@ from r3m import load_r3m
 
 from reward_extraction.models import Policy
 from reward_extraction.utils import mixup_criterion, mixup_data
-
 from robot.data import RoboDemoDset
+from viz.plot import VisdomVisualizer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -40,16 +41,16 @@ class LearnedRewardFunction():
     def __init__(self):
         pass
 
-    def _train_step(self):
+    def _train_step(self, plot_images: bool = False):
         pass
 
     def train(self, num_batches):
-        for _ in tqdm(range(num_batches)):
+        for i in tqdm(range(num_batches)):
             if not self.disable_ranking:
                 self.ranking_optimizer.zero_grad()
             self.same_traj_optimizer.zero_grad()
 
-            loss_dict = self._train_step()
+            loss_dict = self._train_step(plot_images=(i == 0))
 
             if not self.disable_ranking:
                 loss_dict["ranking_loss"].backward()
@@ -206,6 +207,8 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
 
         # training parameters
         self.batch_size = 64
+        self.transform_batch_size = 8 # apply transform in sets of x images instead of to every image
+        assert (self.batch_size % self.transform_batch_size == 0)
         self.lr = 1e-4
 
         # network definitions
@@ -251,6 +254,10 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
 
         self.set_image_transforms()
 
+        # debug viz
+        vis = visdom.Visdom()
+        self.viz = VisdomVisualizer(vis, "main")
+
         # train the ranking function so it's not giving junk for exploration
         self.init_ranking()
 
@@ -261,11 +268,11 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         '''
         ranking_init_losses = []
         num_init_steps = 200
-        for _ in tqdm(range(num_init_steps)):
+        for i in tqdm(range(num_init_steps)):
             if not self.disable_ranking:
                 self.ranking_optimizer.zero_grad()
 
-            ranking_loss, _ = self._train_ranking_step()
+            ranking_loss, _ = self._train_ranking_step(plot_images=(i % 50 == 0))
 
             if not self.disable_ranking:
                 ranking_loss.backward()
@@ -315,7 +322,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
     def set_image_transforms(self):
         self._train_transforms = T.Compose([
                 T.Resize(256),
-                T.ColorJitter(),
+                T.ColorJitter(brightness=0.5 , contrast=0.1, saturation=0.1, hue=0.3),
                 T.RandomRotation(15), # +/-15 degrees of random rotation
                 T.RandomCrop(224), # T.CenterCrop(224)
         ])
@@ -326,7 +333,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         ])
 
 
-    def _train_ranking_step(self):
+    def _train_ranking_step(self, plot_images: bool = False):
         '''
         sample from expert data (factuals) => train ranking, classifier positives
         '''
@@ -349,8 +356,14 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
             ).to(device)
 
             # apply data augmentation and convert into form ready for r3m
-            expert_processed_images_t_tensor = self._train_transforms(expert_images_t_tensor)
-            expert_processed_images_other_t_tensor = self._train_transforms(expert_other_images_t_tensor)
+            expert_processed_images_t_tensor = torch.cat(
+                [self._train_transforms(expert_images_t_tensor[i * self.transform_batch_size: (i + 1) * self.transform_batch_size]) for i in range(int(self.batch_size / self.transform_batch_size))]
+            )
+            expert_processed_images_other_t_tensor = torch.cat(
+                [self._train_transforms(expert_other_images_t_tensor[i * self.transform_batch_size: (i + 1) * self.transform_batch_size]) for i in range(int(self.batch_size / self.transform_batch_size))]
+            )
+            if plot_images:
+                self.viz.plot_rgb_batch(expert_processed_images_t_tensor, nrow=self.transform_batch_size, window_name="demo data")
 
             # convert to r3m vec
             with torch.no_grad():
@@ -391,7 +404,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
 
         return loss_monotonic, expert_states_t
 
-    def _train_step(self):
+    def _train_step(self, plot_images: bool = False):
         self._seen_on_policy_data = True
 
         '''
@@ -412,11 +425,17 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
                 dim=0
             ).to(device)
 
-            rb_processed_images = self._train_transforms(rb_images_tensor)
+            # apply data augmentation and convert into form ready for r3m
+            rb_processed_images = torch.cat(
+                [self._train_transforms(rb_images_tensor[i * self.transform_batch_size: (i + 1) * self.transform_batch_size]) for i in range(int(self.batch_size / self.transform_batch_size))]
+            )
+
+            if plot_images:
+                self.viz.plot_rgb_batch(rb_processed_images, nrow=self.transform_batch_size, window_name="replay buffer")
 
             # convert to r3m vec
             with torch.no_grad():
-                rb_image_vecs = self.r3m_net(rb_processed_images * 255.0) # r3m expects input to be 0-255
+                rb_image_vecs = self.r3m_net(rb_images_tensor * 255.0) # r3m expects input to be 0-255
             rb_cf_states = rb_image_vecs.cpu().squeeze().numpy()
         else:
             rb_cf_states = batch["observations"][:, :self.obs_size]
