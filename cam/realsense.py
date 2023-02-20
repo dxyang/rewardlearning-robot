@@ -13,7 +13,7 @@ def get_connected_device_sns():
 def get_connected_device_info():
     context = rs.context()
     devices = [
-        {d.get_info(rs.camera_info.name): d.get_info(rs.camera_info.serial_number)} for d in context.devices
+        (d.get_info(rs.camera_info.name), d.get_info(rs.camera_info.serial_number)) for d in context.devices
     ]
     return devices
 
@@ -196,13 +196,19 @@ if __name__ == "__main__":
 
     # print all cameras
     cams = get_connected_device_info()
-    print(f"Currently connected cameras: {cams}")
-    res = input("continue? (y/n)")
+    print(f"Currently connected cameras:")
+    for idx, cam in enumerate(cams):
+        print(f"[{idx}]: {cam}")
+    res = input("which cam?")
     if res == "n":
         exit()
+    elif res == "default":
+        serial_number = "215122255998"
+    else:
+        cam_idx = int(res)
+        serial_number = cams[cam_idx][1]
 
     # start camera feed
-    serial_number = "215122255998"
     rsi = RealSenseInterface(serial_number=serial_number)
     init = True
 
