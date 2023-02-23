@@ -503,21 +503,18 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         for p in aggregate_ps:
             plt.plot(p)
         plt.ylim(0, 1)
-        plt.legend()
         plt.savefig(f"{plot_dir}/alltrajs_progress.png")
 
         plt.clf(); plt.cla()
         for p in aggregate_ms:
             plt.plot(p)
         plt.ylim(0, 1)
-        plt.legend()
         plt.savefig(f"{plot_dir}/alltrajs_mask.png")
 
         plt.clf(); plt.cla()
         for p in aggregate_rs:
             plt.plot(p)
         plt.ylim(0, 1)
-        plt.legend()
         plt.savefig(f"{plot_dir}/alltrajs_rewards.png")
 
 
