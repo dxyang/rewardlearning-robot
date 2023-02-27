@@ -23,6 +23,7 @@ from robot.utils import (
     GRIPPER_MAX_WIDTH, GRIPPER_FORCE, GRIPPER_SPEED,
     Rate
 )
+from robot.cabinet import CabinetDoorCloser
 from r3m import load_r3m
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -366,30 +367,26 @@ class FrankaEnv(gym.Env):
 empirically moved around the arm to figure out where it could reach without probably running into joint lock
 '''
 FRANKA_XYZ_MIN = np.array([
-    0.28, -0.25, 0.25        # safe to set z min to 0.16, but let's make sure we don't crush a box
+    0.28, -0.25, 0.16        # safe to set z min to 0.16, but let's make sure we don't crush a box
 ])
 FRANKA_XYZ_MAX = np.array([
     0.7, 0.25, 0.58
 ])
 FRANKA_STEP_MAX = 0.1
 
-class SafeTaskSpaceFrankEnv(FrankaEnv):
-    '''
-    Real franka env that also sandboxes the robot into a safe workspace.
 
-    real robot tasks should inherit from this class and redefine how reward is calculated
+class CleanFrankaEnv(FrankaEnv):
+    '''
+    wrapper around the polymetis wrapper that asserts on position control and
+    uses r3m to preprocess images
     '''
     def __init__(
         self,
-        xyz_min: np.ndarray = FRANKA_XYZ_MIN,
-        xyz_max: np.ndarray = FRANKA_XYZ_MAX,
         use_r3m: bool = False,
         r3m_net: torch.nn.Module = None,
         only_pos_control: bool = True,
         **kwargs
     ):
-        self.xyz_min = xyz_min
-        self.xyz_max = xyz_max
         self.action_scale = FRANKA_STEP_MAX
         self.use_r3m = use_r3m
         self.only_pos_control = only_pos_control
@@ -486,6 +483,23 @@ class SafeTaskSpaceFrankEnv(FrankaEnv):
         '''
         return reward
 
+class SafeTaskSpaceFrankEnv(CleanFrankaEnv):
+    '''
+    Real franka env that also sandboxes the robot into a safe workspace.
+    Safe task space form a bounding box
+    '''
+    def __init__(
+        self,
+        xyz_min: np.ndarray = FRANKA_XYZ_MIN,
+        xyz_max: np.ndarray = FRANKA_XYZ_MAX,
+        **kwargs
+    ):
+        self.xyz_min = xyz_min
+        self.xyz_max = xyz_max
+
+        CleanFrankaEnv.__init__(self, **kwargs)
+
+
     def step(
         self, action: Optional[np.ndarray], delta: bool = True
     ) -> Tuple[Dict[str, np.ndarray], int, bool, None]:
@@ -560,6 +574,165 @@ class LrfRealFrankaReach(SafeTaskSpaceFrankEnv):
         state = torch.from_numpy(obs["r3m_vec"]).float()
         reward = self.lrf._calculate_reward(state)
         return reward
+
+
+def table_constraint_checker(eef_xyz: np.ndarray):
+    '''
+    table constraints
+    x > 0.28
+    x < 0.7
+    y > -0.25
+    y < 0.25
+    z > 0.16
+    z < 0.58
+    '''
+
+    x = eef_xyz[0]
+    y = eef_xyz[1]
+    z = eef_xyz[2]
+
+    def line_constraint(x, y, x1, x2, y1, y2):
+        '''
+        point is underneath line => return true
+        point is above line => return false
+        '''
+        m = (y2 - y1) / (x2 - x1)
+        b = y1 - m * x1
+
+        y_line = m * x + b
+        return y_line > y
+
+    def point_closest_to_line(x, y, x1, x2, y1, y2):
+        '''
+        '''
+        slope_vec = np.array([x2 - x1, y2 - y1])
+        slope_vec_normd = slope_vec / np.linalg.norm(slope_vec)
+        delta_vec = np.array([x - x1, y - y1])
+        angle = np.arccos(delta_vec.dot(slope_vec) / (np.linalg.norm(delta_vec) * np.linalg.norm(slope_vec_normd)))
+
+        closest_point = np.array([x1, y1]) + np.linalg.norm(delta_vec) * np.cos(angle) * slope_vec_normd
+        return closest_point
+
+    def satisfies_constraints(x, y, z):
+        # print(x > FRANKA_XYZ_MIN[0])
+        # print(x < FRANKA_XYZ_MAX[0])
+        # print(y > FRANKA_XYZ_MIN[1])
+        # print(y < FRANKA_XYZ_MAX[1])
+        # print(z > FRANKA_XYZ_MIN[2])
+        # print(z < FRANKA_XYZ_MAX[2])
+        # print(line_constraint(x, y, 0.6, 0.77, 0.33, 0.2))
+        return (
+            x >= FRANKA_XYZ_MIN[0] and
+            x <= FRANKA_XYZ_MAX[0] and
+            y >= FRANKA_XYZ_MIN[1] and
+            y <= FRANKA_XYZ_MAX[1] and
+            z >= FRANKA_XYZ_MIN[2] and
+            z <= FRANKA_XYZ_MAX[2] and
+            line_constraint(x, y, 0.6, 0.77, 0.33, 0.2)
+        )
+
+    is_valid = satisfies_constraints(x, y, z)
+    return_point = np.array([x, y, z])
+    if not is_valid:
+        # clamp point
+        return_point = np.array([
+            min(max(FRANKA_XYZ_MIN[0], x), FRANKA_XYZ_MAX[0]),
+            min(max(FRANKA_XYZ_MIN[1], y), FRANKA_XYZ_MAX[1]),
+            min(max(FRANKA_XYZ_MIN[2], z), FRANKA_XYZ_MAX[2]),
+        ])
+        is_valid_now = satisfies_constraints(return_point[0], return_point[1], return_point[2])
+
+        # check if works
+        if not is_valid_now:
+            # print(f"finding nearest point on the line!")
+            # find nearest point on line
+            closest_point = point_closest_to_line(return_point[0], return_point[1], 0.6, 0.77, 0.33, 0.2)
+            return_point[0] = closest_point[0]
+            return_point[1] = closest_point[1]
+
+        assert satisfies_constraints(return_point[0], return_point[1], return_point[2])
+
+    return return_point
+
+class CabinetDoorOpenFranka(CleanFrankaEnv):
+    '''
+    Real franka env that also sandboxes the robot into a safe workspace.
+    Safe task space from a function (bounding box with a line going through representing the cabinet front)
+    '''
+    def __init__(self, **kwargs):
+        self.cabinet = CabinetDoorCloser()
+        CleanFrankaEnv.__init__(self, **kwargs)
+
+    def return_home_safely(self):
+        # if the robot interface doesn't exist yet, we can assume robot is in a safe
+        # position for us to rewind the cabinet
+        if self.robot is not None:
+            # for now assume going to home won't break anything /shrug
+            self.robot.go_home()
+
+    def reset(self):
+        self.return_home_safely()
+        self.cabinet.env_reset()
+        return super().reset()
+
+    def step(
+        self, action: Optional[np.ndarray], delta: bool = True
+    ) -> Tuple[Dict[str, np.ndarray], int, bool, None]:
+        curr_ee_xyz = self.current_ee_pose[:3]
+
+        gripper_action = 1.0
+        if self.use_gripper:
+            gripper_action = action[-1]
+
+        if self.controller == "cartesian":
+            if delta:
+                # actions are coming in between -1, 1 (probably?)
+                scaled_xyz_action = action[:3] * self.action_scale
+
+                # calculate new point
+                new_xyz = curr_ee_xyz + scaled_xyz_action
+
+                valid_xyz = table_constraint_checker(new_xyz)
+
+                # delta should keep us within the sandbox
+                new_xyz_delta = valid_xyz - curr_ee_xyz
+
+                if self.only_pos_control:
+                    clamped_action = np.append(new_xyz_delta, [0.0, 0.0, 0.0])
+                else:
+                    clamped_action = np.append(new_xyz_delta, [action[3], action[4], action[5]])
+            else:
+                assert False # this seems.... dangerous
+        else:
+            raise NotImplementedError(f"Havevn't thought through space clamping for this controller!")
+
+        obs, reward, done, info = super().step(action=clamped_action, delta=delta, open_gripper=(gripper_action >= 0.0))
+
+        reward = self._calculate_reward(obs, reward, info)
+
+        return obs, reward, done, info
+
+    def _calculate_reward(self, obs, reward, info):
+        return reward
+
+class LrfCabinetDoorOpenFranka(CabinetDoorOpenFranka):
+    from reward_extraction.reward_functions import RobotLearnedRewardFunction
+
+    def __init__(self, **kwargs):
+        self.lrf = None
+        CabinetDoorOpenFranka.__init__(self, **kwargs)
+
+    def set_lrf(self, lrf: RobotLearnedRewardFunction):
+        print(f"learned reward function set!")
+        self.lrf = lrf
+
+    def _calculate_reward(self, obs, reward, info):
+        assert self.lrf is not None
+
+        state = torch.from_numpy(obs["r3m_vec"]).float()
+        reward = self.lrf._calculate_reward(state)
+        return reward
+
 
 
 if __name__ == "__main__":
