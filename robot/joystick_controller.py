@@ -51,7 +51,7 @@ class Buttons(object):
         self.gamepad = pygame.joystick.Joystick(0)
         self.gamepad.init()
 
-    def input(self) -> Tuple[bool, bool, bool]:
+    def input(self) -> Tuple[bool, bool, bool, bool]:
         # Get "A", "B", "X", "Y" Button Presses
         pygame.event.get()
         a, b = self.gamepad.get_button(0), self.gamepad.get_button(1)
