@@ -35,9 +35,13 @@ class ArgumentParser(Tap):
     task: str                                           # Task ID for demonstration collection
     data_dir: Path = Path("data/demos/")                # Path to parent directory for saving demonstrations
 
+    use_gripper: bool = False
+
     # Task Parameters
-    include_visual_states: bool = True                 # Whether to run playback/get visual states (only False for now)
+    include_visual_states: bool = True                  # Whether to run playback/get visual states (only False for now)
     max_time_per_demo: int = 15                         # Max time (in seconds) to record demo -- default = 21 seconds
+
+    random_reset: bool = False                          # randomly initialize home pose with an offset
 
     # Collection Parameters
     collection_strategy: str = "kinesthetic"            # How demos are collected :: only `kinesthetic` for now!
@@ -73,8 +77,8 @@ def demonstrate() -> None:
         controller=args.controller,
         mode="record",
         use_camera=args.include_visual_states,
-        use_gripper=False, # TODO: create some sort of button pressing mechanism to open and close the gripper,
-        random_reset_home_pose=True
+        use_gripper=args.use_gripper, # TODO: create some sort of button pressing mechanism to open and close the gripper,
+        random_reset_home_pose=args.random_reset
     )
 
     # Initializing Button Control... TODO(siddk) -- switch with ASR
@@ -119,6 +123,7 @@ def demonstrate() -> None:
         # Drop into Recording Loop --> for `record` mode, we really only care about joint positions
         #   =>> TODO(siddk) - handle Gripper?
         joint_qs = []
+        gripper_controls = []
         for _ in range(int(args.max_time_per_demo * HZ) - 1):
             # visualize if camera
             if args.show_viewer:
@@ -127,17 +132,20 @@ def demonstrate() -> None:
                 cv2.waitKey(1)
 
             # Get Button Input (only if True) --> handle extended button press...
-            _, _, x, _ = buttons.input()
+            _, b, x, _ = buttons.input()
 
             # Terminate...
             if x:
                 print("\tHit (X) - stopping recording...")
                 break
-
             # Otherwise no termination, keep on recording...
             else:
-                obs, _, _, _ = env.step(None)
+                close_gripper = False
+                if b:
+                    close_gripper = True
+                obs, _, _, _ = env.step(None, open_gripper = not close_gripper)
                 joint_qs.append(obs["q"])
+                gripper_controls.append(b)
 
         # Close Environment
         env.close()
@@ -184,7 +192,10 @@ def demonstrate() -> None:
             # Execute Trajectory
             print("\tReplaying...")
             for idx in range(len(joint_qs)):
-                obs, _, _, _ = env.step(joint_qs[idx])
+                close_gripper = False
+                if gripper_controls[idx]:
+                    close_gripper = True
+                obs, _, _, _ = env.step(joint_qs[idx], open_gripper= not close_gripper)
                 eef_poses.append(obs["ee_pose"].copy())
                 eef_xyzs.append(obs["ee_pose"][:3].copy())
                 jas.append(obs["q"].copy())
