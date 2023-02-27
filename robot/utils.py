@@ -14,7 +14,8 @@ POLE_LIMIT = 1.0 - 1e-6
 TOLERANCE = 1e-10
 
 HOMES = {
-    "default": [0.0, -np.pi / 4.0, 0.0, -3.0 * np.pi / 4.0, 0.0, np.pi / 2.0, np.pi / 4.0]
+    # "default": [0.0, -np.pi / 4.0, 0.0, -3.0 * np.pi / 4.0, 0.0, np.pi / 2.0, np.pi / 4.0]
+    "default": [0.0, -np.pi / 4.0, 0.0, -3.0 * np.pi / 4.0, 0.0, 3 * np.pi / 4.0, 0.0]
 }
 
 # Control Frequency & other useful constants...
