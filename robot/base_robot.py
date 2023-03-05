@@ -149,6 +149,7 @@ class TaskSpaceRobotEnv(RobotEnv):
         (process and pass to a learned function, calculate some l2 distance, etc.)
         '''
         return 0
+# test commit since github is weird
 
 class LrfTaskSpaceRobotEnv(TaskSpaceRobotEnv):
     def set_lrf(self, lrf: RobotLearnedRewardFunction):
