@@ -137,6 +137,7 @@ def demonstrate() -> None:
                 # cv2.waitKey(1)
 
             # Get Button Input (only if True) --> handle extended button press...
+            
             console = input()
             print(console)
             a = console == 'a'
