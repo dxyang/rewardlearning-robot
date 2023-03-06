@@ -21,7 +21,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 from tap import Tap
-from pynput import keyboard
+from pynput.keyboard import Key, Listener
+import sys
+import select
+import tty
+import termios
 
 from cam.utils import VideoRecorder
 
@@ -108,8 +112,10 @@ def demonstrate() -> None:
             "\tPress (Y) to quit, and (A) to start recording!\n "
         )
         # Loop on valid button input...
+
+
         console = input()
-        print(console)
+        # print(console)
         a = console == 'a'
         x = console =='x'
         y = console =='y'
@@ -125,33 +131,86 @@ def demonstrate() -> None:
 
         # Go, go, go!
         print("\t=>> Started recording... press (X) to terminate recording!")
+        # rgbs = []
+
+        def isData():
+            return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
+
+        old_settings = termios.tcgetattr(sys.stdin)
+        try:
+                tty.setcbreak(sys.stdin.fileno())
+                ee_poses = []
+                print(args.max_time_per_demo)
+                print(HZ)
+                for _ in range(int(args.max_time_per_demo * HZ) - 1):
+                    # visualize if camera
+                    if args.show_viewer:
+                        bgr = cv2.cvtColor(obs["rgb_image"], cv2.COLOR_RGB2BGR)
+                        cv2.imshow('RGB', bgr)
+                        cv2.waitKey(1)
+
+                    # Get Button Input (only if True) --> handle extended button press...
+
+                    # Terminate...
+                    if isData():
+                        c = sys.stdin.read(1)
+                        print(c)
+                        if c == 'x':         # x1b is ESC
+                                print("\tHit (X) - stopping recording...")
+                                break
+                    # Otherwise no termination, keep on recording...
+                    else:
+                        obs, _, _, _ = env.step(None)
+                        ee_poses.append(obs["ee_pos"])
+                        # rgbs.append(obs["rgb_image"])
+        finally:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
         # Drop into Recording Loop --> for `record` mode, we really only care about joint positions
         #   =>> TODO(siddk) - handle Gripper?
-        ee_poses = []
-        for _ in range(int(args.max_time_per_demo * HZ) - 1):
-            # visualize if camera
-            if args.show_viewer:
-                bgr = cv2.cvtColor(obs["rgb_image"], cv2.COLOR_RGB2BGR)
-                cv2.imshow('RGB', bgr)
-                # cv2.waitKey(1)
+        # ee_poses = []
+        # print(args.max_time_per_demo)
+        # print(HZ)
+        # for _ in range(int(args.max_time_per_demo * HZ) - 1):
+        #     # visualize if camera
+        #     if args.show_viewer:
+        #         bgr = cv2.cvtColor(obs["rgb_image"], cv2.COLOR_RGB2BGR)
+        #         cv2.imshow('RGB', bgr)
+        #         cv2.waitKey(1)
 
-            # Get Button Input (only if True) --> handle extended button press...
+        #     # Get Button Input (only if True) --> handle extended button press...
             
-            console = input()
-            print(console)
-            a = console == 'a'
-            x = console =='x'
-            y = console =='y'
-            # Terminate...
-            if x:
-                print("\tHit (X) - stopping recording...")
-                break
-            # Otherwise no termination, keep on recording...
-            else:
-                obs, _, _, _ = env.step(None)
-                ee_poses.append(obs["ee_pos"])
-                print(len(ee_poses))
+        #     # console = input()
+        #     # print(console)
+        #     # a = console == 'a'
+        #     # x = console =='x'
+        #     # y = console =='y'
+        #     # opt = ""
+        #     # def on_press(key):
+        #     #     if key.char == "x":
+        #     #         global opt 
+        #     #         opt = key.char
+        #     #         return False
+            
+        #     # with Listener(on_press=on_press) as listener:
+        #     #     listener.join()
+
+
+        #     console = input()
+        #     # print(console)
+        #     a = console == 'a'
+        #     x = console =='x'
+        #     y = console =='y'
+
+        #     # Terminate...
+        #     if x or _ == 150:
+        #         print("\tHit (X) - stopping recording...")
+        #         break
+        #     # Otherwise no termination, keep on recording...
+        #     else:
+        #         obs, _, _, _ = env.step(None)
+        #         ee_poses.append(obs["ee_pos"])
+        #         # rgbs.append(obs["rgb_image"])
         # Close Environment
         env.close()
 
@@ -180,8 +239,8 @@ def demonstrate() -> None:
                 do_playback = False
 
         # Special Playback Handling -- change gains, and replay!
-        # jas = []
-        # eef_poses = []
+        jas = []
+        eef_poses = []
         rgbs = []
         if do_playback:
             # TODO(siddk) -- handle Camera observation logging...
@@ -221,6 +280,8 @@ def demonstrate() -> None:
             # eef_xyzs_np = np.array(eef_xyzs).T # N x 3
             plot_points_sequence(scene.figure, points=eef_xyzs_np)
             scene.plot_scene_to_html("test")
+        
+        print(len(rgbs))
 
         # Move on?
         print("Next? Press (A) to save and continue or (Y) to quit without saving or (X) to retry demo and skip save")

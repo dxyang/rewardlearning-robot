@@ -232,7 +232,7 @@ class XArmTaskSpaceEnv(RobotEnv):
         ######
         # do something here to control robot
         ######
-        if action != None:
+        if action is not None:
             assert action.shape[0] == 3
             self.move_xyz(action, deltas=delta)
         self.rate.sleep()
