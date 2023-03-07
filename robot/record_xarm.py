@@ -32,7 +32,7 @@ from cam.utils import VideoRecorder
 from robot.base_robot import XArmTaskSpaceEnv
 from robot.data import RoboDemoDset
 from robot.utils import HZ
-
+from robot.xarm_env import XArmEnv
 
 class ArgumentParser(Tap):
     # fmt: off
@@ -75,12 +75,16 @@ def demonstrate() -> None:
 
     # Initialize environment in `record` mode...
     print("[*] Initializing Robot Connection...")
-    env = XArmTaskSpaceEnv(
-        control_frequency_hz=HZ,
-        use_camera=args.include_visual_states,
-        use_gripper=args.use_gripper, # TODO: create some sort of button pressing mechanism to open and close the gripper,
-        random_reset_home_pose=args.random_reset
-    )
+    # env = XArmTaskSpaceEnv(
+    #     control_frequency_hz=HZ,
+    #     use_camera=args.include_visual_states,
+    #     use_gripper=args.use_gripper, # TODO: create some sort of button pressing mechanism to open and close the gripper,
+    #     random_reset_home_pose=args.random_reset
+    # )
+    env = XArmEnv(control_frequency_hz=HZ, control_mode='angular',
+                  use_camera=args.include_visual_states,
+                  use_gripper=args.use_gripper,
+                  random_reset_home_pose=args.random_reset)
 
     # Initializing Button Control... TODO(siddk) -- switch with ASR
     # print("[*] Connecting to Button Controller...")
@@ -140,6 +144,7 @@ def demonstrate() -> None:
         try:
                 tty.setcbreak(sys.stdin.fileno())
                 ee_poses = []
+                angle_poses = []
                 print(args.max_time_per_demo)
                 print(HZ)
                 for _ in range(int(args.max_time_per_demo * HZ) - 1):
@@ -162,6 +167,7 @@ def demonstrate() -> None:
                     else:
                         obs, _, _, _ = env.step(None)
                         ee_poses.append(obs["ee_pos"])
+                        angle_poses.append(obs['q'])
                         # rgbs.append(obs["rgb_image"])
         finally:
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
@@ -265,9 +271,11 @@ def demonstrate() -> None:
 
             # Execute Trajectory
             print("\tReplaying...")
-            for idx in range(len(ee_poses)):
-                obs, _, _, _ = env.step(ee_poses[idx])
+            for idx in range(len(angle_poses)):
+                obs, _, _, _ = env.step(angle_poses[idx])
                 rgbs.append(obs["rgb_image"].copy())
+                jas.append(obs['q'])
+                eef_poses.append(obs['ee_pos'])
             # Close Environment
             env.close()
 

@@ -209,6 +209,10 @@ class XArmTaskSpaceEnv(RobotEnv):
         return obs
 
     def set_mode(self, mode:str = 'default'):
+        '''
+        This sets the robot into a mode to kinistetic teaching. 
+        To use this, default is normal mode, and record is kinistetic mode.
+        '''
         self.mode = mode
         if mode == 'default':
             self.robot.set_mode(0)
@@ -233,6 +237,7 @@ class XArmTaskSpaceEnv(RobotEnv):
         # do something here to control robot
         ######
         if action is not None:
+            # Make sure the action is an x,y,z 
             assert action.shape[0] == 3
             self.move_xyz(action, deltas=delta)
         self.rate.sleep()
@@ -305,7 +310,7 @@ class XArmTaskSpaceEnv(RobotEnv):
             with torch.no_grad():
                 embedding = self.r3m(processed_image * 255.0) # r3m expects input to be 0-255
             r3m_embedding = embedding.cpu().squeeze().numpy()
-            r3m_with_ppc = np.concatenate([r3m_embedding, state_obs])
+            # r3m_with_ppc = np.concatenate([r3m_embedding, state_obs])
             obs["r3m_vec"] = r3m_embedding
         return obs
     
