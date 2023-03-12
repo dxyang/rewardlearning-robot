@@ -41,7 +41,6 @@ class ArgumentParser(Tap):
     task: str  # Task ID for demonstration collection
     data_dir: Path = Path("data/demos/")  # Path to parent directory for saving demonstrations
 
-    use_gripper: bool = False
 
     # Task Parameters
     include_visual_states: bool = True  # Whether to run playback/get visual states (only False for now)
@@ -50,8 +49,6 @@ class ArgumentParser(Tap):
     random_reset: bool = False  # randomly initialize home pose with an offset
 
     # Collection Parameters
-    collection_strategy: str = "kinesthetic"  # How demos are collected :: only `kinesthetic` for now!
-    controller: str = "joint"  # Demonstration & playback uses a Joint Impedance controller...
     resume: bool = True  # Resume demonstration collection (on by default)
 
     plot_trajectory: bool = False  # generate html plot for visualizing trajectory
@@ -80,7 +77,6 @@ def demonstrate() -> None:
     env = XArmTaskSpaceEnv(
         control_frequency_hz=HZ,
         use_camera=args.include_visual_states,
-        use_gripper=args.use_gripper,
         # TODO: create some sort of button pressing mechanism to open and close the gripper,
         random_reset_home_pose=args.random_reset
     )
