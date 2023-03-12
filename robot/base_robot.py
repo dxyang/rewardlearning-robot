@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import random
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from cam.realsense import RealSenseInterface
 from PIL import Image
@@ -215,7 +216,7 @@ class XArmTaskSpaceEnv(RobotEnv):
         '''
         self.mode = mode
         if mode == 'default':
-            self.robot.set_mode(0)
+            self.robot.set_mode(7)
         elif mode == 'record':
             self.robot.set_mode(2)
         self.robot.set_state(0)
@@ -267,11 +268,18 @@ class XArmTaskSpaceEnv(RobotEnv):
     def robot_setup(self, home: str = 'default'):
         self.robot = XArmAPI(self.xarm_ip)
         self.robot.motion_enable(enable=True)
-        self.robot.set_mode(0)
+        self.robot.set_mode(7)
         self.robot.set_state(state=0)
+        # self.robot.set_tcp_load(0.2, [0, 0, 0])
         print(f'Going to initial position')
         if home == 'default':  
-            self.move_xyz(self.home_xyz, wait=True)
+            # self.move_xyz(self.home_xyz, wait=True)
+            self.robot.set_mode(0)
+            self.robot.set_state(0)
+            self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0], wait=True)
+            self.robot.set_mode(7)
+            self.robot.set_state(0)
+            # self.robot.set_tcp_load(0.2, [0, 0, 0])
         else:
             raise NotImplementedError("Only have one default hardcoded reset pos")
         if self.random_reset_home_pos:
@@ -327,7 +335,13 @@ class XArmTaskSpaceEnv(RobotEnv):
             # We might not want to get the cur xyz here and instead use the self.curxyz
             cur_pos = self.cur_xyz
             xyz = np.add(cur_pos, xyz)
-        self.robot.set_position(x=xyz[0], y= xyz[1], z=xyz[2], wait=wait)
+        self.robot.set_position(x=xyz[0], y= xyz[1], z=xyz[2])
+        # Janky wait code
+        if(wait):
+            while(True):
+                time.sleep(.1)
+                if(not self.robot.get_is_moving()):
+                    break
     
     def get_cur_xyz(self) -> np.ndarray:
         error, position = self.robot.get_position()
