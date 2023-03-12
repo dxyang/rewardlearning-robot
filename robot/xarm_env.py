@@ -138,6 +138,8 @@ class XArmEnv(RobotEnv):
 
     def robot_setup(self, home: str = 'default'):
         self.robot = XArmAPI(self.xarm_ip)
+        self.robot.clean_warn()
+        self.robot.clean_error()
         self.robot.motion_enable(enable=True)
         self.robot.set_mode(0)
         self.robot.set_state(state=0)
@@ -232,3 +234,10 @@ class XArmEnv(RobotEnv):
         if error != 0:
             raise NotImplementedError('Need to handle angle error')
         return np.array(angles[:5])
+    
+    def close(self):
+        if self.control_mode == 'default':
+            self.move_xyz(self.home_xyz, wait=True)
+        elif self.control_mode == 'angular':
+            self.move_angles(self.home_angles, wait=True)
+        self.robot.disconnect()
