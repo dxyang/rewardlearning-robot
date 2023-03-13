@@ -13,6 +13,7 @@ References:
     - https://github.com/AGI-Labs/franka_control/blob/master/record.py
     - https://github.com/AGI-Labs/franka_control/blob/master/playback.py
 """
+import math
 import os
 from datetime import datetime
 from pathlib import Path
@@ -81,14 +82,6 @@ def demonstrate() -> None:
         random_reset_home_pose=args.random_reset
     )
     oculus = OculusController()
-    # env = XArmEnv(control_frequency_hz=HZ, control_mode='angular',
-    #               use_camera=args.include_visual_states,
-    #               use_gripper=args.use_gripper,
-    #               random_reset_home_pose=args.random_reset)
-
-    # Initializing Button Control... TODO(siddk) -- switch with ASR
-    # print("[*] Connecting to Button Controller...")
-    # buttons, demo_index = Buttons(), 1
 
     # If `resume` -- get "latest" index
     if args.resume:
@@ -137,6 +130,7 @@ def demonstrate() -> None:
 
         # rgbs = []
         ee_poses = []
+        ee_deltas = []
         oculus.reset()
         # angle_poses = []
         # print(args.max_time_per_demo)
@@ -162,11 +156,20 @@ def demonstrate() -> None:
             # Otherwise no termination, keep on recording...
             else:
                 # dumb scaling because it works better
-                deltas = oculus.get_deltas() * 10
+                deltas = oculus.get_deltas() *10
                 deltas[2] *= 2.5
                 #  print(deltas)
+                # for i, delt in enumerate(deltas):
+                #     if abs(delt) > 1:
+                #         deltas[i] = 1 * delt / abs(delt)
+                # print(deltas)
+                # norm = np.linalg.norm(deltas)
+                # if not norm == 0:
+                #     deltas =  deltas / norm
+                # print(deltas)
                 obs, _, _, _ = env.step(action=deltas, delta=True)
                 ee_poses.append(obs["ee_pos"])
+                ee_deltas.append(obs['delta_ee_pos'])
                 # angle_poses.append(obs['q'])
                 # rgbs.append(obs["rgb_image"])
 
@@ -212,12 +215,12 @@ def demonstrate() -> None:
             eef_poses.append(obs['ee_pos'])
 
             # Block on User Ready -- Robot will move, so this is for safety...
-            print("\tReady to playback! Get out of the way, and hit (A) to continue...")
+            print("\tReady to playback! Get out of the way, and hit (A) to continue or TR to skip...")
             press = oculus.get_buttons()
             a = press['A']
             b = press['B']
             tr = press['RTr']
-            while not a:
+            while not a and not tr:
                 press = oculus.get_buttons()
                 a = press['A']
                 b = press['B']
@@ -225,8 +228,10 @@ def demonstrate() -> None:
 
             # Execute Trajectory
             print("\tReplaying...")
-            for idx in range(len(ee_poses)):
-                obs, _, _, _ = env.step(ee_poses[idx])
+            for idx in range(len(ee_deltas)):
+                if(tr):
+                    break
+                obs, _, _, _ = env.step(ee_deltas[idx], delta=True)
                 rgbs.append(obs["rgb_image"].copy())
                 # jas.append(obs['q'])
                 eef_poses.append(obs['ee_pos'])
