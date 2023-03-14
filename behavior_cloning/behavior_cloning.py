@@ -6,6 +6,8 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Tuple
 from robot.data import RoboDemoDset
 from robot.base_robot import XArmTaskSpaceEnv
+from reward_extraction import MLP
+import sys
 # export PYTHONPATH="${PYTHONPATH}:/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 class BCNet(nn.Module):
@@ -126,29 +128,43 @@ def try_until_estop(model, SCALE):
             obs = env.step(action=(update*SCALE), delta=True)[0]
 
 def main():
-    train_loader, test_loader = data(1)
-    net = BCNet().to(device)
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.00001, weight_decay=0.01)
-    print(len(train_loader))
-    epochs = 100
-    for _ in range(epochs): 
-        one_train_iter(net, optimizer, train_loader)
-        eval(net, test_loader)
-    for state, labels in test_loader:
-        state, labels = state.to(device), labels.to(device)
-        # print(state)
-        print(net(state))
-        print(labels)
-        # print(state.shape)
-        # print(labels.shape)
-        # print(net(state).shape)
-        break
-    # ry_until_estop(net, 1)
+    mode = sys.argv[1]
+    scale = int(sys.argv[2])
+    if mode == "train":
+        epoch_num = int(sys.argv[3])
+        train_loader, test_loader = data(scale)
+        net = MLP(3, 300, 3, 3, nn.Tanh()).to(device)
+        optimizer = torch.optim.Adam(net.parameters(), lr=0.00001, weight_decay=0.01)
+        print(len(train_loader))
+        epochs = epoch_num
+        for _ in range(epochs): 
+            one_train_iter(net, optimizer, train_loader)
+            eval(net, test_loader)
+        for state, labels in test_loader:
+            state, labels = state.to(device), labels.to(device)
+            # print(state)
+            print(net(state))
+            print(labels)
+            # print(state.shape)
+            # print(labels.shape)
+            # print(net(state).shape)
+            break
+
+        # save model
+        print("saving model...")
+        torch.save(net, "reward_extraction/behavior_cloning/bc_net2.pt")
+        print("saved, terminate.")
+        # try_until_estop(net, 1)
+    elif mode == "deploy":
+        deploy()
+    else: 
+        print("Wrong argument, please enter either 'train' or 'deploy'")
     
 # def debug():
     
-
-
+def deploy():
+    net = torch.load("reward_extraction/behavior_cloning/bc_net2.pt")
+    try_until_estop(net, 1)
 
 
 if __name__ == '__main__':
