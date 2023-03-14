@@ -6,7 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Tuple
 from robot.data import RoboDemoDset
 from robot.base_robot import XArmTaskSpaceEnv
-from reward_extraction import MLP
+from reward_extraction.models import MLP
 import sys
 # export PYTHONPATH="${PYTHONPATH}:/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -43,9 +43,12 @@ def data(SCALE) -> Tuple[DataLoader, DataLoader]:
                 continue
             state.append(joint_poses[i] / SCALE)
             targets.append(joint_poses[i+1] / SCALE - joint_poses[i] / SCALE)
-            # targets.append(joint_poses[i]/100)
+            targets.append(joint_poses[i]/100)
         # print(joint_poses[:10])
         # print(delta_targets[:10])
+
+        # targets += joint_poses[:-1] - joint_poses[1:]
+        # state += joint_poses[:-1]
 
         # targets.append(targets)
         
@@ -133,8 +136,8 @@ def main():
     if mode == "train":
         epoch_num = int(sys.argv[3])
         train_loader, test_loader = data(scale)
-        net = MLP(3, 300, 3, 3, nn.Tanh()).to(device)
-        optimizer = torch.optim.Adam(net.parameters(), lr=0.00001, weight_decay=0.01)
+        net = MLP(3, 300, 3, 3, nn.LeakyReLU()).to(device)
+        optimizer = torch.optim.Adam(net.parameters(), lr=0.00001, weight_decay=0.01) # best hyper: nonlinear = LReLU, lr = 0.00001, decay = 0.01
         print(len(train_loader))
         epochs = epoch_num
         for _ in range(epochs): 
@@ -152,7 +155,7 @@ def main():
 
         # save model
         print("saving model...")
-        torch.save(net, "reward_extraction/behavior_cloning/bc_net2.pt")
+        torch.save(net, "behavior_cloning/bc_net2.pt")
         print("saved, terminate.")
         # try_until_estop(net, 1)
     elif mode == "deploy":
@@ -163,7 +166,7 @@ def main():
 # def debug():
     
 def deploy():
-    net = torch.load("reward_extraction/behavior_cloning/bc_net2.pt")
+    net = torch.load("behavior_cloning/bc_net2.pt")
     try_until_estop(net, 1)
 
 
