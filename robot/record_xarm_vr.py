@@ -30,11 +30,10 @@ import termios
 
 from cam.utils import VideoRecorder
 
-from robot.base_robot import XArmTaskSpaceEnv
 from robot.data import RoboDemoDset
 from robot.utils import HZ
 from robot.vr import OculusController
-from robot.xarm_env import XArmEnv
+from robot.xarm_env import XArmCentimeterSafeEnvironment
 
 
 class ArgumentParser(Tap):
@@ -75,7 +74,7 @@ def demonstrate() -> None:
 
     # Initialize environment in `record` mode...
     print("[*] Initializing Robot Connection...")
-    env = XArmTaskSpaceEnv(
+    env = XArmCentimeterSafeEnvironment(
         control_frequency_hz=HZ,
         use_camera=args.include_visual_states,
         # TODO: create some sort of button pressing mechanism to open and close the gripper,
@@ -156,7 +155,7 @@ def demonstrate() -> None:
             # Otherwise no termination, keep on recording...
             else:
                 # dumb scaling because it works better
-                deltas = oculus.get_deltas() *10
+                deltas = oculus.get_deltas()
                 deltas[2] *= 2.5
                 #  print(deltas)
                 # for i, delt in enumerate(deltas):

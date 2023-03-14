@@ -43,7 +43,7 @@ def data(SCALE) -> Tuple[DataLoader, DataLoader]:
                 continue
             state.append(joint_poses[i] / SCALE)
             targets.append(joint_poses[i+1] / SCALE - joint_poses[i] / SCALE)
-            targets.append(joint_poses[i]/100)
+            # targets.append(joint_poses[i]/100)
         # print(joint_poses[:10])
         # print(delta_targets[:10])
 
@@ -136,7 +136,8 @@ def main():
     if mode == "train":
         epoch_num = int(sys.argv[3])
         train_loader, test_loader = data(scale)
-        net = MLP(3, 300, 3, 3, nn.LeakyReLU()).to(device)
+        # net = MLP(3, 300, 3, 3, nn.LeakyReLU()).to(device)
+        net = BCNet().to(device)
         optimizer = torch.optim.Adam(net.parameters(), lr=0.00001, weight_decay=0.01) # best hyper: nonlinear = LReLU, lr = 0.00001, decay = 0.01
         print(len(train_loader))
         epochs = epoch_num
@@ -156,7 +157,7 @@ def main():
         # save model
         print("saving model...")
         torch.save(net, "behavior_cloning/bc_net2.pt")
-        print("saved, terminate.")
+        print("saved, terminate.")Xa
         # try_until_estop(net, 1)
     elif mode == "deploy":
         deploy()

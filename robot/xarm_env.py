@@ -1,3 +1,4 @@
+import time
 from robot.base_robot import RobotEnv
 from typing import Any, Dict, List, Optional, Tuple
 from cam.realsense import RealSenseInterface
@@ -15,11 +16,12 @@ from robot.utils import Rate
 from r3m import load_r3m
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class XArmEnv(RobotEnv):
+
+class XArmBaseEnvironment(RobotEnv):
     def __init__(
     self,
     control_frequency_hz: int,
-    control_mode: str = 'default',
+    only_pos_control: bool = True,
     use_gripper: bool = False,
     use_camera: bool = False,
     use_r3m: bool = False,
@@ -29,18 +31,12 @@ class XArmEnv(RobotEnv):
     ):
         self.hz = control_frequency_hz
         self.rate = Rate(control_frequency_hz)
-        self.control_mode = control_mode
+        self.only_pos_control = only_pos_control
         self.use_gripper = use_gripper
         self.random_reset_home_pos = random_reset_home_pose
         self.xarm_ip = xarm_ip
         self.robot = None
-        # TODO: This is bad, we should have a better home pos
-        if self.control_mode == 'default':
-            self.home_xyz = [553,29,435]
-        elif self.control_mode == 'angular':
-            self.home_angles = [3, 15.4, -91.8, 76.3, 4.9]
-        else:
-            raise NotImplementedError("This control mode not implemented yet")
+        self.mode = 'default'
         '''
         r3m useful for converting images to embeddings
         '''
@@ -61,8 +57,6 @@ class XArmEnv(RobotEnv):
         if self.use_camera:
             self.rgb, self.d = None, None
             self.cam = RealSenseInterface()
-        if self.random_reset_home_pos:
-            self._last_random_offset = np.zeros(3)
         obs = self.reset()
 
     def reset(self)-> Dict[str, np.ndarray]:
@@ -76,9 +70,9 @@ class XArmEnv(RobotEnv):
         This sets the robot into a mode to kinistetic teaching. 
         To use this, default is normal mode, and record is kinistetic mode.
         '''
-        # self.mode = mode
+        self.mode = mode
         if mode == 'default':
-            self.robot.set_mode(0)
+            self.robot.set_mode(7)
         elif mode == 'record':
             self.robot.set_mode(2)
         self.robot.set_state(0)
@@ -101,12 +95,8 @@ class XArmEnv(RobotEnv):
         ######
         if action is not None:
             # Make sure the action is an x,y,z 
-            if self.control_mode == 'default':
-                assert len(action) == 3
-                self.move_xyz(action, deltas=delta)
-            elif self.control_mode == 'angular':
-                assert len(action) == 5
-                self.move_angles(action, deltas=delta)
+            assert action.shape[0] == 3
+            self.move_xyz(action, deltas=delta)
         self.rate.sleep()
         obs = self.get_obs()
         obs = self._process_obs(obs)
@@ -124,48 +114,40 @@ class XArmEnv(RobotEnv):
 
     def action_space(self):
         # 6-DoF (x, y, z, roll, pitch, yaw) (absolute or deltas)
-        if self.control_mode == 'default':
-            low = np.array([-1, -1, -1])
-            hi = np.array([1, 1, 1])
-            return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
-        elif self.control_mode == 'angular':
-            low = np.array([-1, -1, -1, -1, -1])
-            hi = np.array([1, 1, 1, 1, 1])
-            return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
+        low = np.array([-1, -1, -1])
+        hi = np.array([1, 1, 1])
+        return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
 
     def image_space(self) -> gym.spaces.Box:
         return gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8) # HWC
 
     def robot_setup(self, home: str = 'default'):
         self.robot = XArmAPI(self.xarm_ip)
-        self.robot.clean_warn()
-        self.robot.clean_error()
         self.robot.motion_enable(enable=True)
-        self.robot.set_mode(0)
+        self.robot.set_mode(7)
         self.robot.set_state(state=0)
+        # self.robot.set_tcp_load(0.2, [0, 0, 0])
         print(f'Going to initial position')
-        if home == 'default': 
-            if self.control_mode == 'default':
-                self.move_xyz(self.home_xyz, wait=True)
-            elif self.control_mode == 'angular':
-                self.move_angles(self.home_angles, wait=True)
+        if home == 'default':  
+            self.robot.set_mode(0)
+            self.robot.set_state(0)
+            # In order to fix Kinematics error, if you just force reset to jas, it works
+            self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0], wait=True)
+            self.robot.set_mode(7)
+            self.robot.set_state(0)
+            # self.robot.set_tcp_load(0.2, [0, 0, 0])
         else:
             raise NotImplementedError("Only have one default hardcoded reset pos")
         if self.random_reset_home_pos:
-            if self.control_mode == 'default':
-                x_magnitude = 0.1
-                y_magnitude = 0.25
-                xyz_delta = np.array([
-                    (np.random.random() * 2.0 - 1) * x_magnitude,
-                    (np.random.random() * 2.0 - 1) * y_magnitude,
-                    0.0
-                ])
-                self.move_xyz(xyz_delta, deltas=True, wait=True)
-            elif self.control_mode == 'angular':
-                angular_delta = np.array([(np.random.random() * 2.0 - 1) for i in range(5)])
-                self.move_angles(angular_delta, deltas=True, wait=True)
+            x_magnitude = 0.1
+            y_magnitude = 0.25
+            xyz_delta = np.array([
+                (np.random.random() * 2.0 - 1) * x_magnitude,
+                (np.random.random() * 2.0 - 1) * y_magnitude,
+                0.0
+            ])
+            self.robot.move_xyz(xyz_delta, deltas=True, wait=True)
         self.cur_xyz = self.get_cur_xyz()
-        self.cur_angles = self.get_cur_angles()
 
 
     def get_obs(self) -> Dict[str, np.ndarray]:
@@ -173,19 +155,14 @@ class XArmEnv(RobotEnv):
         if self.use_camera:
             self.rgb, self.d = self.cam.get_latest_rgbd()
         position = self.get_cur_xyz()
-        angles = self.get_cur_angles()
         obs = {
-            "q": angles,
-            "delta_q": angles - self.cur_angles,
             "ee_pos": position,
-            "delta_ee_pos": position - self.cur_xyz,
-            
+            "delta_ee_pos": position - self.cur_xyz, 
         }
         if self.use_camera:
             obs['rgb_image'] = self.rgb
             obs['d_image'] = self.d
         self.cur_xyz = position
-        self.cur_angles = angles
         return obs
     
 
@@ -214,30 +191,74 @@ class XArmEnv(RobotEnv):
             # We might not want to get the cur xyz here and instead use the self.curxyz
             cur_pos = self.cur_xyz
             xyz = np.add(cur_pos, xyz)
-        self.robot.set_position(x=xyz[0], y= xyz[1], z=xyz[2], wait=wait)
+        self.robot.set_position(x=xyz[0], y= xyz[1], z=xyz[2])
+        # Janky wait code
+        if(wait):
+            while(True):
+                time.sleep(.1)
+                if(not self.robot.get_is_moving()):
+                    break
     
     def get_cur_xyz(self) -> np.ndarray:
         error, position = self.robot.get_position()
         if error != 0:
             raise NotImplementedError('Need to handle xarm exception')
         return np.array(position[:3])
-    
-    def move_angles(self, angles: np.ndarray, deltas: bool = False, wait: bool=False) -> None:
-        if deltas:
-            angles = np.add(angles, self.cur_angles)
-        # Have to add on two zeros to the angles
-        angles = np.pad(angles, (0,2), 'constant')
-        self.robot.set_servo_angle(angle=angles, wait=wait)
 
-    def get_cur_angles(self) -> np.ndarray:
-        error, angles = self.robot.get_servo_angle()
-        if error != 0:
-            raise NotImplementedError('Need to handle angle error')
-        return np.array(angles[:5])
-    
-    def close(self):
-        if self.control_mode == 'default':
-            self.move_xyz(self.home_xyz, wait=True)
-        elif self.control_mode == 'angular':
-            self.move_angles(self.home_angles, wait=True)
-        self.robot.disconnect()
+
+# This converts the unites of end effector positons into centemeters. This means that it returns centimeeters
+# and is passed centimeters.
+class XArmCentimeterBaseEnviornment(XArmBaseEnvironment):
+    def move_xyz(self, xyz:np.ndarray, deltas: bool = False, wait: bool = False) -> None:
+        if deltas:
+            # We might not want to get the cur xyz here and instead use the self.curxyz
+            cur_pos = self.cur_xyz
+            xyz = np.add(cur_pos, xyz)
+        self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10)
+        # Janky wait code
+        if(wait):
+            while(True):
+                time.sleep(.1)
+                if(not self.robot.get_is_moving()):
+                    break
+  
+    def get_cur_xyz(self) -> np.ndarray:
+        return super().get_cur_xyz() / 10
+
+class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
+    """
+    This arm will not go outside the safty box that we have constructed.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.min_box = [17.9, -27.8,45.7]
+        self.max_box = [65, 44.9 ,157.8]
+    def move_xyz(self, xyz:np.ndarray, deltas: bool = False, wait: bool = False) -> None:
+        if deltas:
+            # We might not want to get the cur xyz here and instead use the self.curxyz
+            cur_pos = self.cur_xyz
+            xyz = np.add(cur_pos, xyz)
+        # Clamp it to be within the min and max poses. The min and max are in centimeeters
+        # and clamped to centimeeters
+        for i in range(len(xyz)):
+            xyz[i] = max(self.min_box[i], xyz[i])
+            xyz[i] = min(self.max_box[i], xyz[i])
+        
+        self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10)
+        # Janky wait code
+        if(wait):
+            while(True):
+                time.sleep(.1)
+                if(not self.robot.get_is_moving()):
+                    break
+
+
+
+class SimpleRealXArmReach(XArmBaseEnvironment):
+    def __init__(self, goal, **kwargs):
+        self.goal = goal
+        XArmBaseEnvironment.__init__(self, **kwargs)
+
+    def _calculate_reward(self, obs, reward, info):
+        dist = np.linalg.norm(obs['ee_pose'] - self.goal)
+        return -dist
