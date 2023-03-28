@@ -27,7 +27,9 @@ class XArmBaseEnvironment(RobotEnv):
     use_r3m: bool = False,
     r3m_net: torch.nn.Module = None,
     xarm_ip: str = '192.168.1.220',
-    random_reset_home_pose: bool = False
+    random_reset_home_pose: bool = False,
+    speed: float = 1,
+    low_colision_sensitivity: bool = False
     ):
         self.hz = control_frequency_hz
         self.rate = Rate(control_frequency_hz)
@@ -37,6 +39,8 @@ class XArmBaseEnvironment(RobotEnv):
         self.xarm_ip = xarm_ip
         self.robot = None
         self.mode = 'default'
+        self.speed = speed
+        self.colision_sensitivity = low_colision_sensitivity
         '''
         r3m useful for converting images to embeddings
         '''
@@ -58,6 +62,7 @@ class XArmBaseEnvironment(RobotEnv):
             self.rgb, self.d = None, None
             self.cam = RealSenseInterface()
         obs = self.reset()
+        print(f"speed = {self.robot.last_used_tcp_speed}")
 
     def reset(self)-> Dict[str, np.ndarray]:
         self.robot_setup()
@@ -95,8 +100,16 @@ class XArmBaseEnvironment(RobotEnv):
         ######
         if action is not None:
             # Make sure the action is an x,y,z 
-            assert action.shape[0] == 3
-            self.move_xyz(action, deltas=delta)
+            if self.use_gripper:
+                assert action.shape[0] == 4
+                self.update_gripper(action[3])
+            else:
+                assert action.shape[0] == 3
+            self.move_xyz(action[:3], deltas=delta)
+        # if open_gripper:
+        #     self.robot.set_vacuum_gripper(True)
+        # else:
+        #     self.robot.set_vacuum_gripper(False)
         self.rate.sleep()
         obs = self.get_obs()
         obs = self._process_obs(obs)
@@ -105,6 +118,13 @@ class XArmBaseEnvironment(RobotEnv):
         info = {}
 
         return obs, reward, done, info
+    
+    def update_gripper(self, command: float):
+        if command > 0:
+            self.robot.set_vacuum_gripper(True)
+        else:
+            self.robot.set_vacuum_gripper(False)
+
 
     def close(self):
         self.robot.disconnect()
@@ -114,8 +134,12 @@ class XArmBaseEnvironment(RobotEnv):
 
     def action_space(self):
         # 6-DoF (x, y, z, roll, pitch, yaw) (absolute or deltas)
-        low = np.array([-1, -1, -1])
-        hi = np.array([1, 1, 1])
+        if self.use_gripper:    
+            low = np.array([-1, -1, -1, -1])
+            hi = np.array([1, 1, 1, 1])
+        else:
+            low = np.array([-1, -1, -1])
+            hi = np.array([1, 1, 1])
         return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
 
     def image_space(self) -> gym.spaces.Box:
@@ -126,6 +150,9 @@ class XArmBaseEnvironment(RobotEnv):
         self.robot.motion_enable(enable=True)
         self.robot.set_mode(7)
         self.robot.set_state(state=0)
+        self.robot.set_vacuum_gripper(False)
+        if self.colision_sensitivity:
+            self.robot.set_collision_sensitivity(0)
         # self.robot.set_tcp_load(0.2, [0, 0, 0])
         print(f'Going to initial position')
         if home == 'default':  
@@ -141,6 +168,7 @@ class XArmBaseEnvironment(RobotEnv):
         if self.random_reset_home_pos:
             x_magnitude = 0.1
             y_magnitude = 0.25
+            # TODO: scale this from -1 to 1
             xyz_delta = np.array([
                 (np.random.random() * 2.0 - 1) * x_magnitude,
                 (np.random.random() * 2.0 - 1) * y_magnitude,
@@ -156,6 +184,7 @@ class XArmBaseEnvironment(RobotEnv):
             self.rgb, self.d = self.cam.get_latest_rgbd()
         position = self.get_cur_xyz()
         obs = {
+            # TODO: Scale this delta ee pos by the units 
             "ee_pos": position,
             "delta_ee_pos": position - self.cur_xyz, 
         }
@@ -169,13 +198,7 @@ class XArmBaseEnvironment(RobotEnv):
     def _process_obs(self, obs):
         if self.use_r3m:
             # convert from hwc to bchw
-            pil_img = Image.fromarray(obs["rgb_image"])
-            processed_image = self._transforms(pil_img).unsqueeze(0).to(device)
-            with torch.no_grad():
-                embedding = self.r3m(processed_image * 255.0) # r3m expects input to be 0-255
-            r3m_embedding = embedding.cpu().squeeze().numpy()
-            # r3m_with_ppc = np.concatenate([r3m_embedding, state_obs])
-            obs["r3m_vec"] = r3m_embedding
+            pil_img = Image.frompositionm_embedding
         return obs
     
     def rgb(self) -> np.ndarray:
@@ -188,17 +211,21 @@ class XArmBaseEnvironment(RobotEnv):
 
     def move_xyz(self, xyz:np.ndarray, deltas: bool = False, wait: bool = False) -> None:
         if deltas:
+            # # TODO: Make this actually clip it and use a paramater, not 6
+            # deltas.clip(-1,1)
+            # deltas *= 6 
+            # our actual uniits
             # We might not want to get the cur xyz here and instead use the self.curxyz
             cur_pos = self.cur_xyz
             xyz = np.add(cur_pos, xyz)
-        self.robot.set_position(x=xyz[0], y= xyz[1], z=xyz[2])
-        # Janky wait code
+        self.robot.set_position(x=xyz[0], y= xyz[1], z=xyz[2], speed=self.speed)
+        # Janky wait code.
+
         if(wait):
             while(True):
                 time.sleep(.1)
                 if(not self.robot.get_is_moving()):
                     break
-    
     def get_cur_xyz(self) -> np.ndarray:
         error, position = self.robot.get_position()
         if error != 0:
@@ -214,7 +241,7 @@ class XArmCentimeterBaseEnviornment(XArmBaseEnvironment):
             # We might not want to get the cur xyz here and instead use the self.curxyz
             cur_pos = self.cur_xyz
             xyz = np.add(cur_pos, xyz)
-        self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10)
+        self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10, speed=self.speed)
         # Janky wait code
         if(wait):
             while(True):
@@ -231,8 +258,8 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.min_box = [17.9, -27.8,45.7]
-        self.max_box = [65, 44.9 ,157.8]
+        self.min_box = [17.9, -45.8,14]
+        self.max_box = [69, 45 ,62]
     def move_xyz(self, xyz:np.ndarray, deltas: bool = False, wait: bool = False) -> None:
         if deltas:
             # We might not want to get the cur xyz here and instead use the self.curxyz
@@ -244,7 +271,7 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
             xyz[i] = max(self.min_box[i], xyz[i])
             xyz[i] = min(self.max_box[i], xyz[i])
         
-        self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10)
+        self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10, speed=self.speed)
         # Janky wait code
         if(wait):
             while(True):
@@ -253,12 +280,16 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
                     break
 
 
-
-class SimpleRealXArmReach(XArmBaseEnvironment):
+class SimpleRealXArmReach(XArmCentimeterSafeEnvironment):
     def __init__(self, goal, **kwargs):
         self.goal = goal
         XArmBaseEnvironment.__init__(self, **kwargs)
 
     def _calculate_reward(self, obs, reward, info):
+        # Current goal position is '[60.4, -5.47, 35.41]'
         dist = np.linalg.norm(obs['ee_pose'] - self.goal)
         return -dist
+    
+    def observation_space(self):
+        obs_dict = GymDict()
+        base_obs_dim = 9

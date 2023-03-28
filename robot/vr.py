@@ -54,7 +54,7 @@ class OculusController():
         final_deltas[0] = deltas[2] 
         final_deltas = np.array(final_deltas) * 100
         for i , delta in enumerate(final_deltas):
-            final_deltas[i] = delta if delta > 1 or delta < -1 else 0
+            final_deltas[i] = delta if delta > .5 or delta < -.5 else 0
         return final_deltas
 
 def main():
@@ -64,6 +64,7 @@ def main():
         pos = reader.get_deltas()
         # print(f'X delta= {pos[0]},      Y Delta = {pos[1]},     Z Delta = {pos[2]}')
         press = reader.get_buttons()
+        print(press)
         print(f"A: {press['A']}, B: {press['B']}, RTrig: {press['RTr']}")
         print(not press['A'])
         time.sleep(.5)
