@@ -21,6 +21,7 @@ class XArmBaseEnvironment(RobotEnv):
     def __init__(
     self,
     control_frequency_hz: int,
+    scale_factor: float = 10,
     only_pos_control: bool = True,
     use_gripper: bool = False,
     use_camera: bool = False,
@@ -29,7 +30,8 @@ class XArmBaseEnvironment(RobotEnv):
     xarm_ip: str = '192.168.1.220',
     random_reset_home_pose: bool = False,
     speed: float = 1,
-    low_colision_sensitivity: bool = False
+    low_colision_sensitivity: bool = False,
+    # noisy: bool = False
     ):
         self.hz = control_frequency_hz
         self.rate = Rate(control_frequency_hz)
@@ -41,6 +43,8 @@ class XArmBaseEnvironment(RobotEnv):
         self.mode = 'default'
         self.speed = speed
         self.colision_sensitivity = low_colision_sensitivity
+        self.scale_factor = scale_factor
+        # self.noisy = noisy
         '''
         r3m useful for converting images to embeddings
         '''
@@ -62,12 +66,22 @@ class XArmBaseEnvironment(RobotEnv):
             self.rgb, self.d = None, None
             self.cam = RealSenseInterface()
         obs = self.reset()
-        print(f"speed = {self.robot.last_used_tcp_speed}")
+        # print(f"speed = {self.robot.last_used_tcp_speed}")
 
     def reset(self)-> Dict[str, np.ndarray]:
         self.robot_setup()
         obs = self.get_obs()
         obs = self._process_obs(obs)
+
+
+        # I don't think that griper should be in end effector pose, it shoudl be it's own thing like in the franka env
+        # if self.use_gripper:
+        #     # print(f"before: {obs['ee_pos']}")
+        #     # print(action[3])
+        #     obs['ee_pos'] = np.append(obs['ee_pos'], -1)
+        #     # print(f"after: {obs['ee_pos']}")
+        #     obs['delta_ee_pos'] = np.append(obs['delta_ee_pos'], -1)
+
         return obs
 
     def set_mode(self, mode:str = 'default'):
@@ -85,8 +99,7 @@ class XArmBaseEnvironment(RobotEnv):
 
     def step(
         self,
-        action: Optional[np.ndarray], delta: bool = False, open_gripper: Optional[bool] = None
-    ):
+        action: Optional[np.ndarray], delta: bool = False):
         '''
         Run a step in the environment, where `delta` specifies if we are sending
         absolute poses or deltas in poses!
@@ -106,10 +119,7 @@ class XArmBaseEnvironment(RobotEnv):
             else:
                 assert action.shape[0] == 3
             self.move_xyz(action[:3], deltas=delta)
-        # if open_gripper:
-        #     self.robot.set_vacuum_gripper(True)
-        # else:
-        #     self.robot.set_vacuum_gripper(False)
+
         self.rate.sleep()
         obs = self.get_obs()
         obs = self._process_obs(obs)
@@ -117,12 +127,15 @@ class XArmBaseEnvironment(RobotEnv):
         done = False
         info = {}
 
+
         return obs, reward, done, info
     
     def update_gripper(self, command: float):
         if command > 0:
+            self.gripper_val = 1
             self.robot.set_vacuum_gripper(True)
         else:
+            self.gripper_val = -1
             self.robot.set_vacuum_gripper(False)
 
 
@@ -151,6 +164,7 @@ class XArmBaseEnvironment(RobotEnv):
         self.robot.set_mode(7)
         self.robot.set_state(state=0)
         self.robot.set_vacuum_gripper(False)
+        self.gripper_val = -1
         if self.colision_sensitivity:
             self.robot.set_collision_sensitivity(0)
         # self.robot.set_tcp_load(0.2, [0, 0, 0])
@@ -183,11 +197,22 @@ class XArmBaseEnvironment(RobotEnv):
         if self.use_camera:
             self.rgb, self.d = self.cam.get_latest_rgbd()
         position = self.get_cur_xyz()
+
+
+        # This is not how we should add noise
+        # if self.noisy: 
+        #     position += np.random.normal(0, 0.05, position.shape)
+
         obs = {
-            # TODO: Scale this delta ee pos by the units 
+            # TODO: Change this for the gripper
             "ee_pos": position,
-            "delta_ee_pos": position - self.cur_xyz, 
+            "delta_ee_pos": (position - self.cur_xyz) / self.scale_factor, 
         }
+
+        if self.use_gripper:
+            obs['ee_pos'] = np.append(obs['ee_pos'], self.gripper_val)
+            obs['delta_ee_pos'] = np.append(obs['delta_ee_pos'], self.gripper_val)
+        
         if self.use_camera:
             obs['rgb_image'] = self.rgb
             obs['d_image'] = self.d
@@ -212,9 +237,8 @@ class XArmBaseEnvironment(RobotEnv):
     def move_xyz(self, xyz:np.ndarray, deltas: bool = False, wait: bool = False) -> None:
         if deltas:
             # # TODO: Make this actually clip it and use a paramater, not 6
-            # deltas.clip(-1,1)
-            # deltas *= 6 
-            # our actual uniits
+            xyz = xyz.clip(-1, 1)
+            xyz *= self.scale_factor
             # We might not want to get the cur xyz here and instead use the self.curxyz
             cur_pos = self.cur_xyz
             xyz = np.add(cur_pos, xyz)
@@ -222,32 +246,33 @@ class XArmBaseEnvironment(RobotEnv):
         # Janky wait code.
 
         if(wait):
-            while(True):
-                time.sleep(.1)
-                if(not self.robot.get_is_moving()):
-                    break
+            self.wait_until_stopped()
+            
     def get_cur_xyz(self) -> np.ndarray:
         error, position = self.robot.get_position()
         if error != 0:
             raise NotImplementedError('Need to handle xarm exception')
         return np.array(position[:3])
 
-
+    def wait_until_stopped(self):
+        while(True):
+            time.sleep(.1)
+            if(not self.robot.get_is_moving()):
+                break
 # This converts the unites of end effector positons into centemeters. This means that it returns centimeeters
 # and is passed centimeters.
 class XArmCentimeterBaseEnviornment(XArmBaseEnvironment):
     def move_xyz(self, xyz:np.ndarray, deltas: bool = False, wait: bool = False) -> None:
         if deltas:
             # We might not want to get the cur xyz here and instead use the self.curxyz
+            xyz = xyz.clip(-1, 1)
+            xyz *= self.scale_factor
             cur_pos = self.cur_xyz
             xyz = np.add(cur_pos, xyz)
         self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10, speed=self.speed)
         # Janky wait code
         if(wait):
-            while(True):
-                time.sleep(.1)
-                if(not self.robot.get_is_moving()):
-                    break
+            self.wait_until_stopped()
   
     def get_cur_xyz(self) -> np.ndarray:
         return super().get_cur_xyz() / 10
@@ -262,7 +287,8 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
         self.max_box = [69, 45 ,62]
     def move_xyz(self, xyz:np.ndarray, deltas: bool = False, wait: bool = False) -> None:
         if deltas:
-            # We might not want to get the cur xyz here and instead use the self.curxyz
+            xyz = xyz.clip(-1, 1)
+            xyz *= self.scale_factor
             cur_pos = self.cur_xyz
             xyz = np.add(cur_pos, xyz)
         # Clamp it to be within the min and max poses. The min and max are in centimeeters
@@ -272,12 +298,9 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
             xyz[i] = min(self.max_box[i], xyz[i])
         
         self.robot.set_position(x=xyz[0]*10, y= xyz[1]*10, z=xyz[2]*10, speed=self.speed)
-        # Janky wait code
         if(wait):
-            while(True):
-                time.sleep(.1)
-                if(not self.robot.get_is_moving()):
-                    break
+            self.wait_until_stopped()
+
 
 
 class SimpleRealXArmReach(XArmCentimeterSafeEnvironment):

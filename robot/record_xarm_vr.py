@@ -53,6 +53,7 @@ class ArgumentParser(Tap):
 
     plot_trajectory: bool = False  # generate html plot for visualizing trajectory
     show_viewer: bool = False
+    noise: bool = False # If to add noies to control inputs
     # fmt: on
 
 
@@ -78,7 +79,11 @@ def demonstrate() -> None:
         control_frequency_hz=HZ,
         use_camera=args.include_visual_states,
         # TODO: create some sort of button pressing mechanism to open and close the gripper,
-        random_reset_home_pose=args.random_reset
+        use_gripper=True,
+        random_reset_home_pose=args.random_reset,
+        speed=150,
+        low_colision_sensitivity=True,
+        scale_factor=10,
     )
     oculus = OculusController()
 
@@ -145,6 +150,7 @@ def demonstrate() -> None:
             a = press['A']
             b = press['B']
             tr = press['RTr']
+            suc = press['RG']
 
             # Get Button Input (only if True) --> handle extended button press...
 
@@ -155,8 +161,12 @@ def demonstrate() -> None:
             # Otherwise no termination, keep on recording...
             else:
                 # dumb scaling because it works better
-                deltas = oculus.get_deltas()
-                deltas[2] *= 2.5
+                deltas = oculus.get_deltas() / 8
+                if args.noise:
+                    deltas += np.random.normal(0, 0.02, deltas.shape)
+                deltas = np.append(deltas, -1)
+                if suc:
+                    deltas[3] = 1
                 #  print(deltas)
                 # for i, delt in enumerate(deltas):
                 #     if abs(delt) > 1:
@@ -203,6 +213,7 @@ def demonstrate() -> None:
         jas = []
         eef_poses = []
         rgbs = []
+        eef_deltas = []
         if do_playback:
             # TODO(siddk) -- handle Camera observation logging...
             obs = env.reset()
@@ -212,6 +223,7 @@ def demonstrate() -> None:
             rgbs.append(obs["rgb_image"].copy())
             # jas.append(obs['q'])
             eef_poses.append(obs['ee_pos'])
+            ee_deltas.append(obs['delta_ee_pos'])
 
             # Block on User Ready -- Robot will move, so this is for safety...
             print("\tReady to playback! Get out of the way, and hit (A) to continue or TR to skip...")
@@ -227,13 +239,14 @@ def demonstrate() -> None:
 
             # Execute Trajectory
             print("\tReplaying...")
-            for idx in range(len(ee_deltas)):
+            for idx in range(len(ee_poses)):
                 if(tr):
                     break
-                obs, _, _, _ = env.step(ee_deltas[idx], delta=True)
+                obs, _, _, _ = env.step(ee_poses[idx], delta=False)
                 rgbs.append(obs["rgb_image"].copy())
                 # jas.append(obs['q'])
                 eef_poses.append(obs['ee_pos'])
+                eef_deltas.append(obs['delta_ee_pos'])
             # Close Environment
             env.close()
 
@@ -246,8 +259,6 @@ def demonstrate() -> None:
             # eef_xyzs_np = np.array(eef_xyzs).T # N x 3
             plot_points_sequence(scene.figure, points=eef_xyzs_np)
             scene.plot_scene_to_html("test")
-
-        print(len(rgbs))
 
         # Move on?
         print("Next? Press (A) to save and continue or (B) to quit without saving or (Tr) to retry demo and skip save")
@@ -277,10 +288,12 @@ def demonstrate() -> None:
             video_recorder.save(f"{save_str}.mp4")
 
             rgb_np = np.expand_dims(np.array(rgbs), axis=0)  # 1, horizon, h, w, c
-            ja_np = np.expand_dims(np.array(jas), axis=0)  # 1, horizon, 7
+            # ja_np = np.expand_dims(np.array(jas), axis=0)  # 1, horizon, 7
             eefpose_np = np.expand_dims(np.array(eef_poses), axis=0)  # 1, horizon, 7
+            eefdeltas_np = np.expand_dims(np.array(eef_deltas), axis=0)
             print(rgb_np.shape)
-            dset.add_traj(rgbs=rgb_np, joint_angles=ja_np, eef_poses=eefpose_np)  # TODO add  joint_angles=ja_np bcak in
+            # WARNING!! Joint angles is actually EE deltas. This is dumb 🤖🚀
+            dset.add_traj(rgbs=rgb_np, joint_angles=eefdeltas_np, eef_poses=eefpose_np)  # TODO add  joint_angles=ja_np bcak in
             demo_index += 1
 
     # And... that's all folks!
