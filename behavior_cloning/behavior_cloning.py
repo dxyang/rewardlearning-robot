@@ -25,15 +25,18 @@ from robot.vr import OculusController
 from robot.xarm_env import XArmCentimeterSafeEnvironment
 
 DEMO = "tissue2"
+PROG = 500
 
 # export PYTHONPATH="${PYTHONPATH}:/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 class BCNet(nn.Module):
     def __init__(self) -> None:
         super(BCNet, self).__init__()
-        self.fc1 = nn.Linear(4, 4000)
-        self.fc2 = nn.Linear(4000, 4000)
-        self.fc3 = nn.Linear(4000, 4)
+        self.fc1 = nn.Linear(4, 400)
+        self.fc2 = nn.Linear(400, 800)
+        self.fc3 = nn.Linear(800, 800)
+        self.fc4 = nn.Linear(800, 400)
+        self.fc5 = nn.Linear(400, 4)
         self.relu = nn.ReLU()
     
     def forward(self, x):
@@ -42,6 +45,10 @@ class BCNet(nn.Module):
         x = self.fc2(x)
         x = self.relu(x)
         x = self.fc3(x)
+        x = self.relu(x)
+        x = self.fc4(x)
+        x = self.relu(x)
+        x = self.fc5(x)
         return x
     
 def test_data():
@@ -88,7 +95,7 @@ def data(SCALE) -> Tuple[DataLoader, DataLoader]:
             # cur_pose = np.append(cur_pose, joint_poses[i][3]) # this is the gripper
             targets.append(deltas[i])
             # targets.append(joint_poses[i]/100)
-
+        
     state, targets = torch.Tensor(np.array(state)), torch.Tensor(np.array(targets))
 
     perm = torch.randperm(len(state))
@@ -204,10 +211,13 @@ def main():
     if mode == "train":
         epoch_num = int(sys.argv[3])
         train_loader, test_loader = data(scale)
+
+        print(len(train_loader))
         
         mse_loss = nn.MSELoss()
         net = BCNet().cuda()
-        optimizer = torch.optim.Adam(net.parameters(), lr=1e-6)
+        # net = MLP(4, 800, 4, 3, nn.ReLU()).to(device)
+        optimizer = torch.optim.Adam(net.parameters(), lr=1e-6, weight_decay=1e-05)
         for j in range(epoch_num):
             for batch in train_loader:
                 obs, act = batch
@@ -223,7 +233,7 @@ def main():
                 loss.backward()
                 optimizer.step()
             
-            if j % 100 == 0:
+            if j % PROG == 0:
                 expert_data = RoboDemoDset(f'/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/{DEMO}/demos.hdf', read_only_if_exists=True)
                 obs = expert_data[0]['eef_pose']
                 act = expert_data[0]['ja']
