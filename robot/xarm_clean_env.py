@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 from gym.spaces import Dict as GymDict
-
+# export XLA_PYTHON_CLIENT_MEM_FRACTION=0.7
 XARM_SDK = '/home/xarm/Desktop/xArm-Python-SDK'
 import sys
 
@@ -57,7 +57,7 @@ class XArmBaseEnvironment(RobotEnv):
         self.robot.set_mode(1)
         self.robot.set_state(0)
         self.robot.set_vacuum_gripper(False)
-        self.r = rospy.Rate(10)
+        self.r = rospy.Rate(control_frequency_hz)
         '''
         r3m useful for converting images to embeddings
         '''
@@ -179,8 +179,10 @@ class XArmBaseEnvironment(RobotEnv):
             self.robot.set_state(0)
             self.robot.motion_enable(enable=True)
             # In order to fix Kinematics error, if you just force reset to jas, it works
-            self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0],
-                                       wait=True)
+            #self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0],
+                                      # wait=True)
+            self.move_xyz(np.array([55.3490479, 2.9007273, 42.4868439]), wait=True)
+            time.sleep(2)
             self.robot.set_vacuum_gripper(False)
             # self.robot.set_tcp_load(0.2, [0, 0, 0])
         else:
@@ -236,18 +238,19 @@ class XArmBaseEnvironment(RobotEnv):
         return self.rgb
 
     def move_xyz(self, xyz: np.ndarray, deltas: bool = False, wait: bool = False) -> None:
-        if deltas:
-            # # TODO: Make this actually clip it and use a paramater, not 6
-            xyz = xyz.clip(-1, 1)
-            xyz *= self.scale_factor
-            # We might not want to get the cur xyz here and instead use the self.curxyz
-            cur_pos = self.get_cur_xyz()
-            xyz = np.add(cur_pos, xyz)
-        self.robot.set_position(x=xyz[0], y=xyz[1], z=xyz[2], speed=self.speed, wait=False)
-        # Janky wait code.
+        # if deltas:
+        #     # # TODO: Make this actually clip it and use a paramater, not 6
+        #     xyz = xyz.clip(-1, 1)
+        #     xyz *= self.scale_factor
+        #     # We might not want to get the cur xyz here and instead use the self.curxyz
+        #     cur_pos = self.get_cur_xyz()
+        #     xyz = np.add(cur_pos, xyz)
+        # self.robot.set_position(x=xyz[0], y=xyz[1], z=xyz[2], speed=self.speed, wait=False)
+        # # Janky wait code.
 
-        if wait:
-            self.wait_until_stopped()
+        # if wait:
+        #     self.wait_until_stopped()
+        pass
 
     def get_cur_xyz(self) -> np.ndarray:
         error, position = self.robot.get_position()
@@ -287,9 +290,10 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
     """
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
         self.min_box = [26.0, -23.1, 21.1]
         self.max_box = [54.4, 20.7, 44.0]
+        super().__init__(**kwargs)
+
 
         # self.min_box = [17.9, -45.8, 14]
         # self.max_box = [69, 45, 62]
@@ -312,11 +316,6 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
         self.robot.set_state(0)
         self.robot.motion_enable(True)
 
-        # pos = self.robot.get_position()[1]
-        # new_pos = pos.copy()
-        # new_pos[0:3] = xyz[:3]*10
-        # e = self.robot.set_servo_cartesian(new_pos)
-        # print(e)
         message = Float32MultiArray()
         message.data = np.asarray(xyz*10).copy()
         self.pub.publish(message)
