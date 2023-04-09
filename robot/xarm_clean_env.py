@@ -57,9 +57,7 @@ class XArmBaseEnvironment(RobotEnv):
         self.robot.set_mode(1)
         self.robot.set_state(0)
         self.robot.set_vacuum_gripper(False)
-        r = rospy.Rate(10)
-        self.r = r
-        # self.noisy = noisy
+        self.r = rospy.Rate(10)
         '''
         r3m useful for converting images to embeddings
         '''
@@ -128,7 +126,7 @@ class XArmBaseEnvironment(RobotEnv):
             else:
                 assert action.shape[0] == 3
             self.move_xyz(action[:3], deltas=delta)
-        self.rate.sleep()
+       # self.rate.sleep()
         obs = self.get_obs()
         obs = self._process_obs(obs)
         reward = self._calculate_reward(obs)
@@ -212,7 +210,7 @@ class XArmBaseEnvironment(RobotEnv):
         obs = {
             # TODO: Change this for the gripper
             "ee_pos": position,
-            "delta_ee_pos": (position - self.cur_xyz) / self.scale_factor,
+            "delta_ee_pos": (position - self.get_cur_xyz()) / self.scale_factor,
         }
 
         if self.use_gripper:
@@ -243,7 +241,7 @@ class XArmBaseEnvironment(RobotEnv):
             xyz = xyz.clip(-1, 1)
             xyz *= self.scale_factor
             # We might not want to get the cur xyz here and instead use the self.curxyz
-            cur_pos = self.cur_xyz
+            cur_pos = self.get_cur_xyz()
             xyz = np.add(cur_pos, xyz)
         self.robot.set_position(x=xyz[0], y=xyz[1], z=xyz[2], speed=self.speed, wait=False)
         # Janky wait code.
@@ -272,7 +270,7 @@ class XArmCentimeterBaseEnviornment(XArmBaseEnvironment):
             # We might not want to get the cur xyz here and instead use the self.curxyz
             xyz = xyz.clip(-1, 1)
             xyz *= self.scale_factor
-            cur_pos = self.cur_xyz
+            cur_pos = self.get_cur_xyz()
             xyz = np.add(cur_pos, xyz)
         self.robot.set_position(x=xyz[0] * 10, y=xyz[1] * 10, z=xyz[2] * 10, speed=self.speed, wait=False)
 
@@ -300,7 +298,7 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
         if deltas:
             xyz = xyz.clip(-1, 1)
             xyz *= self.scale_factor
-            cur_pos = self.cur_xyz
+            cur_pos = self.get_cur_xyz()
             xyz = np.add(cur_pos, xyz)
         # Clamp it to be within the min and max poses. The min and max are in centimeters
         # and clamped to centimeters
