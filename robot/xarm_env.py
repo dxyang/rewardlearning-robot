@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 from gym.spaces import Dict as GymDict
-
+# export XLA_PYTHON_CLIENT_MEM_FRACTION=0.7
 XARM_SDK = '/home/xarm/Desktop/xArm-Python-SDK'
 import sys
 
@@ -21,7 +21,8 @@ import rospy
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 from std_msgs.msg import String, Float32MultiArray
 
-class XArmBaseEnvironment(RobotEnv):
+
+class XArmCmSafeEnvironment(RobotEnv):
     def __init__(
             self,
             control_frequency_hz: int,
@@ -32,34 +33,29 @@ class XArmBaseEnvironment(RobotEnv):
             r3m_net: torch.nn.Module = None,
             xarm_ip: str = '192.168.1.220',
             random_reset_home_pose: bool = False,
-            speed: float = 1,
             low_collision_sensitivity: bool = False,
-            # noisy: bool = False
-    ):
+        ):
+        # Properties that are needed, but we don't use ourselves
+        self.spec = None
+        self.hz = control_frequency_hz
+
         rospy.init_node('robot_node')
         pub = rospy.Publisher('commanded_positions', Float32MultiArray)
         self.pub = pub
 
-        self.hz = control_frequency_hz
+        self.min_box = [26.0, -23.1, 13]
+        self.max_box = [54.4, 20.7, 44.0]
+        
         self.rate = Rate(control_frequency_hz)
         self.use_gripper = use_gripper
         self.random_reset_home_pos = random_reset_home_pose
         self.xarm_ip = xarm_ip
-        self.robot = None
-        self.mode = 'default'
-        self.speed = speed
         self.collision_sensitivity = low_collision_sensitivity
         self.scale_factor = scale_factor
-        self.spec = None
-        self.robot = XArmAPI(self.xarm_ip)
-        self.robot.connect(port=self.xarm_ip)
-        self.robot.motion_enable(enable=True)
-        self.robot.set_mode(1)
-        self.robot.set_state(0)
+        self.robot = XArmAPI(self.xarm_ip); self.robot.connect(port=self.xarm_ip)
+        self.movement_mode()
         self.robot.set_vacuum_gripper(False)
-        r = rospy.Rate(10)
-        self.r = r
-        # self.noisy = noisy
+        self.r = rospy.Rate(control_frequency_hz)
         '''
         r3m useful for converting images to embeddings
         '''
@@ -72,7 +68,7 @@ class XArmBaseEnvironment(RobotEnv):
                 T.ToTensor(),  # divides by 255, will also convert to chw
             ])
             if r3m_net is None:
-                self.r3m = load_r3m("resnet50")  # resnet18
+                self.r3m = load_r3m("resnet18")  # resnet18
                 self.r3m.eval()
                 self.r3m.to(device)
             else:
@@ -89,16 +85,9 @@ class XArmBaseEnvironment(RobotEnv):
         obs = self._process_obs(obs)
         return obs
 
-    def set_mode(self, mode: str = 'default'):
-        '''
-        This sets the robot into a mode to kinistetic teaching. 
-        To use this, default is normal mode, and record is kinesthetic mode.
-        '''
-        self.mode = mode
-        if mode == 'default':
-            self.robot.set_mode(1)
-        elif mode == 'record':
-            self.robot.set_mode(2)
+    def movement_mode(self):
+        self.robot.motion_enable(enable=True)
+        self.robot.set_mode(1)
         self.robot.set_state(0)
 
     def step(
@@ -118,8 +107,7 @@ class XArmBaseEnvironment(RobotEnv):
         error_code = codes[0]
         if error_code != 0:
             self.robot.clean_error()
-            self.robot.motion_enable(True)
-            self.robot.set_state(0)
+            self.movement_mode()
         if action is not None:
             # Make sure the action is an x,y,z 
             if self.use_gripper:
@@ -128,7 +116,6 @@ class XArmBaseEnvironment(RobotEnv):
             else:
                 assert action.shape[0] == 3
             self.move_xyz(action[:3], deltas=delta)
-        self.rate.sleep()
         obs = self.get_obs()
         obs = self._process_obs(obs)
         reward = self._calculate_reward(obs)
@@ -147,7 +134,6 @@ class XArmBaseEnvironment(RobotEnv):
 
     def close(self):
         self.robot.disconnect()
-        # pass
 
     def _calculate_reward(self, obs):
         return 0
@@ -163,56 +149,45 @@ class XArmBaseEnvironment(RobotEnv):
             hi = np.array([1, 1, 1])
         return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
 
+    @property
     def image_space(self) -> gym.spaces.Box:
         return gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8)  # HWC
 
     def robot_setup(self, home: str = 'default'):
-        # self.robot.motion_enable(enable=True)
-        # self.robot.set_mode(7)
-        # self.robot.set_state(state=0)
-        # self.robot.set_vacuum_gripper(False)
         self.gripper_val = -1
         if self.collision_sensitivity:
             self.robot.set_collision_sensitivity(0)
-        # self.robot.set_tcp_load(0.2, [0, 0, 0])
         print(f'Going to initial position')
         if home == 'default':
-            self.robot.set_mode(1)
-            self.robot.set_state(0)
-            self.robot.motion_enable(enable=True)
+            self.movement_mode()
             # In order to fix Kinematics error, if you just force reset to jas, it works
-            self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0],
-                                       wait=True)
+            # self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0],
+            #                            wait=True)
+            self.move_xyz(np.array([55.3490479, 2.9007273, 42.4868439]), wait=True)
+            time.sleep(2)
             self.robot.set_vacuum_gripper(False)
-            # self.robot.set_tcp_load(0.2, [0, 0, 0])
         else:
             raise NotImplementedError("Only have one default hardcoded reset pos")
         if self.random_reset_home_pos:
             x_magnitude = 0.1
             y_magnitude = 0.25
-            # TODO: scale this from -1 to 1
             xyz_delta = np.array([
                 (np.random.random() * 2.0 - 1) * x_magnitude,
                 (np.random.random() * 2.0 - 1) * y_magnitude,
                 0.0
             ])
-            self.robot.move_xyz(xyz_delta, deltas=True, wait=False)
+            self.robot.move_xyz(xyz_delta, deltas=True, wait=True)
+            time.sleep(1)
         self.cur_xyz = self.get_cur_xyz()
 
     def get_obs(self) -> Dict[str, np.ndarray]:
-        # error, new_joint_angles = self.robot.get_servo_angle()[1]
         if self.use_camera:
             self.rgb, self.d = self.cam.get_latest_rgbd()
         position = self.get_cur_xyz()
 
-        # This is not how we should add noise
-        # if self.noisy: 
-        #     position += np.random.normal(0, 0.05, position.shape)
-
         obs = {
-            # TODO: Change this for the gripper
             "ee_pos": position,
-            "delta_ee_pos": (position - self.cur_xyz) / self.scale_factor,
+            "delta_ee_pos": (position - self.get_cur_xyz()) / self.scale_factor,
         }
 
         if self.use_gripper:
@@ -239,23 +214,31 @@ class XArmBaseEnvironment(RobotEnv):
 
     def move_xyz(self, xyz: np.ndarray, deltas: bool = False, wait: bool = False) -> None:
         if deltas:
-            # # TODO: Make this actually clip it and use a paramater, not 6
             xyz = xyz.clip(-1, 1)
             xyz *= self.scale_factor
-            # We might not want to get the cur xyz here and instead use the self.curxyz
-            cur_pos = self.cur_xyz
+            cur_pos = self.get_cur_xyz()
             xyz = np.add(cur_pos, xyz)
-        self.robot.set_position(x=xyz[0], y=xyz[1], z=xyz[2], speed=self.speed, wait=False)
-        # Janky wait code.
+        # Clamp it to be within the min and max poses. The min and max are in centimeters
+        # and clamped to centimeters
+        for i in range(len(xyz)):
+            xyz[i] = max(self.min_box[i], xyz[i])
+            xyz[i] = min(self.max_box[i], xyz[i])
+    
+        self.movement_mode()
 
+        message = Float32MultiArray()
+        message.data = np.asarray(xyz*10).copy()
+        self.pub.publish(message)
+
+        self.r.sleep()
         if wait:
             self.wait_until_stopped()
-
     def get_cur_xyz(self) -> np.ndarray:
+        # In cm
         error, position = self.robot.get_position()
         if error != 0:
             raise NotImplementedError('Need to handle xarm exception')
-        return np.array(position[:3])
+        return np.array(position[:3]) / 10
 
     def wait_until_stopped(self):
         while True:
@@ -263,71 +246,7 @@ class XArmBaseEnvironment(RobotEnv):
             if not self.robot.get_is_moving():
                 break
 
-
-# This converts the unites of end effector positons into centemeters. This means that it returns centimeeters
-# and is passed centimeters.
-class XArmCentimeterBaseEnviornment(XArmBaseEnvironment):
-    def move_xyz(self, xyz: np.ndarray, deltas: bool = False, wait: bool = False) -> None:
-        if deltas:
-            # We might not want to get the cur xyz here and instead use the self.curxyz
-            xyz = xyz.clip(-1, 1)
-            xyz *= self.scale_factor
-            cur_pos = self.cur_xyz
-            xyz = np.add(cur_pos, xyz)
-        self.robot.set_position(x=xyz[0] * 10, y=xyz[1] * 10, z=xyz[2] * 10, speed=self.speed, wait=False)
-
-        if wait:
-            self.wait_until_stopped()
-
-    def get_cur_xyz(self) -> np.ndarray:
-        return super().get_cur_xyz() / 10
-
-
-class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
-    """
-    This arm will not go outside the safty box that we have constructed.
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.min_box = [26.0, -23.1, 21.1]
-        self.max_box = [54.4, 20.7, 44.0]
-
-        # self.min_box = [17.9, -45.8, 14]
-        # self.max_box = [69, 45, 62]
-
-    def move_xyz(self, xyz: np.ndarray, deltas: bool = False, wait: bool = False) -> None:
-        if deltas:
-            xyz = xyz.clip(-1, 1)
-            xyz *= self.scale_factor
-            cur_pos = self.cur_xyz
-            xyz = np.add(cur_pos, xyz)
-        # Clamp it to be within the min and max poses. The min and max are in centimeters
-        # and clamped to centimeters
-        for i in range(len(xyz)):
-            xyz[i] = max(self.min_box[i], xyz[i])
-            xyz[i] = min(self.max_box[i], xyz[i])
-        # import IPython
-        # IPython.embed()
-        
-        self.robot.set_mode(1)
-        self.robot.set_state(0)
-        self.robot.motion_enable(True)
-
-        # pos = self.robot.get_position()[1]
-        # new_pos = pos.copy()
-        # new_pos[0:3] = xyz[:3]*10
-        # e = self.robot.set_servo_cartesian(new_pos)
-        # print(e)
-        message = Float32MultiArray()
-        message.data = np.asarray(xyz*10).copy()
-        self.pub.publish(message)
-
-        self.r.sleep()
-        # self.robot.set_position(x=xyz[0] * 10, y=xyz[1] * 10, z=xyz[2] * 10, speed=self.speed, wait=False)
-        if wait:
-            self.wait_until_stopped()
-
+class RLReadyXarmEnvironment(XArmCmSafeEnvironment):
     def _process_obs(self, obs):
         new_obs = {}
         # print(obs)
@@ -372,8 +291,9 @@ class XArmCentimeterSafeEnvironment(XArmCentimeterBaseEnviornment):
                 obs_dict["r3m_with_ppc"] = gym.spaces.Box(low=float("-inf"), high=float("inf"),
                                                           shape=(base_obs_dim + r3m_embedding_dim,), dtype=np.float32)
         return obs_dict
+    
 
-class SimpleRealXArmReach(XArmCentimeterSafeEnvironment):
+class SimpleRealXArmReach(RLReadyXarmEnvironment):
     def __init__(self, goal, **kwargs):
         super().__init__(**kwargs)
         self.goal = goal
