@@ -38,7 +38,6 @@ from robot.xarm_env import XArmCentimeterSafeEnvironment
 
 class ArgumentParser(Tap):
     # fmt: off
-    task: str  # Task ID for demonstration collection
     data_dir: Path = Path("data/demos/")  # Path to parent directory for saving demonstrations
     include_visual_states: bool = True  # Whether to run playback/get visual states (only False for now)
     max_time_per_demo: int = 1000  # Max time (in seconds) to record demo -- default = 21 seconds
@@ -57,7 +56,8 @@ def demonstrate() -> None:
         use_gripper=True,
         random_reset_home_pose=args.random_reset,
         speed=150,
-        low_colision_sensitivity=True
+        low_colision_sensitivity=True,
+        scale_factor=10
     )
     oculus = OculusController()
     print("[*] Starting Demo Recording Loop...")
@@ -80,6 +80,7 @@ def demonstrate() -> None:
         if b:
             break
         oculus.reset()
+        maxs = 0
         for _ in range(int(args.max_time_per_demo * HZ) - 1):
             press = oculus.get_buttons()
             stop = press['B']
@@ -87,17 +88,22 @@ def demonstrate() -> None:
                 print("stopping recording...")
                 break
             else:
-                deltas = oculus.get_deltas()
+                deltas = oculus.get_deltas() / 8
+                for delta in deltas:
+                    maxs = max(abs(delta), maxs)
                 deltas[2] *= 2.5
+
                 pick = press['RG']
-                deltas = list(deltas)
-                deltas.append(-1)
-                deltas=np.array(deltas)
+                # deltas = list(deltas)
+                # deltas.append(-1)
+                # deltas=np.array(deltas)
+                deltas = np.append(deltas, -1)
                 if pick:
                     deltas[3] = 1
-                deltas=2*deltas
-                obs, _, _, _ = env.step(action=2*deltas, delta=True)
+                
+                obs, _, _, _ = env.step(action=deltas, delta=True)
         env.close()
+        print(f'Max is equal to {maxs}')
 
 if __name__ == "__main__":
     demonstrate()
