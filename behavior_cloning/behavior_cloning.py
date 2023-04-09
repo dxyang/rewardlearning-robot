@@ -26,6 +26,8 @@ from robot.xarm_env import XArmCentimeterSafeEnvironment
 
 DEMO = "tissue2"
 PROG = 500
+EXPERT = RoboDemoDset(f'/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/{DEMO}/demos.hdf', read_only_if_exists=True)
+
 
 # export PYTHONPATH="${PYTHONPATH}:/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -61,7 +63,7 @@ def test_data():
             # TODO: create some sort of button pressing mechanism to open and close the gripper,
             use_gripper=True,
             random_reset_home_pose=False,
-            speed=150,
+            speed=100,
             low_colision_sensitivity=True,
             scale_factor=10
         )
@@ -71,11 +73,9 @@ def test_data():
         env.step(delta, delta=True)
 
 
-def data(SCALE) -> Tuple[DataLoader, DataLoader]:
-    expert_data = RoboDemoDset(f'/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/{DEMO}/demos.hdf', read_only_if_exists=True)
+def process_data(SCALE) -> Tuple[DataLoader, DataLoader]:
+    expert_data = EXPERT
    
-    
-
     state = []
     targets = []
 
@@ -101,15 +101,15 @@ def data(SCALE) -> Tuple[DataLoader, DataLoader]:
     perm = torch.randperm(len(state))
     state, targets = state[perm], targets[perm]
 
-    test_idx = int(len(state) * 1.0)
+    test_idx = int(len(state) * 0.95)
     train_x, train_y = state[:test_idx], targets[:test_idx]
-    # test_x, test_y = state[test_idx:], targets[test_idx:]
+    test_x, test_y = state[test_idx:], targets[test_idx:]
 
     train_loader = DataLoader(BCDataset(train_x, train_y), batch_size=32, shuffle=True)
-    # test_loader = DataLoader(BCDataset(test_x, test_y), batch_size=128, shuffle=True)
+    test_loader = DataLoader(BCDataset(test_x, test_y), batch_size=128, shuffle=True)
 
    
-    return train_loader, None #test_loader
+    return train_loader, test_loader #test_loader
 
 
 
@@ -124,23 +124,39 @@ class BCDataset(Dataset):
     def __getitem__(self, idx):
         return self.x[idx], self.y[idx]
 
-def one_train_iter(net, optimizer, train_loader):
-    critirion = nn.MSELoss()
+def one_train_epoch(net, optimizer, train_loader):
     net.train()
-    losses = []
-    for data, labels in train_loader:
-        data, labels = data.to(device), labels.to(device)
-        # print(f"Current State: {data}")
-        # print(f"To predict: {labels}")
+    for batch in train_loader:
+        obs, act = batch
+        obs = obs.cuda()
+        act = act.cuda()
+        act_pred = net(obs)
+        
+        loss = torch.sum((act_pred - act)**2, dim=-1).mean(dim=0)
+
         optimizer.zero_grad()
-        preds = net(data)
-        # print(f"Error: {preds - labels}")
-        loss = critirion(preds, labels)
-        losses.append(loss.item())
         loss.backward()
         optimizer.step()
-    print(f'Average train loss is {np.mean(losses)}')
-    return np.mean(losses)
+
+    return loss.item()
+    
+
+    # critirion = nn.MSELoss()
+    # net.train()
+    # losses = []
+    # for data, labels in train_loader:
+    #     data, labels = data.to(device), labels.to(device)
+    #     # print(f"Current State: {data}")
+    #     # print(f"To predict: {labels}")
+    #     optimizer.zero_grad()
+    #     preds = net(data)
+    #     # print(f"Error: {preds - labels}")
+    #     loss = critirion(preds, labels)
+    #     losses.append(loss.item())
+    #     loss.backward()
+    #     optimizer.step()
+    # print(f'Average train loss is {np.mean(losses)}')
+    # return np.mean(losses)
 
 def eval(net, test_loader):
     critirion = nn.MSELoss()
@@ -157,9 +173,26 @@ def eval(net, test_loader):
         print(f'Average test loss is {np.mean(losses)}')
 
         return np.mean(losses)
+
+def vis_traj(net, output_name, save=False):
+    expert_data = EXPERT
+    obs = expert_data[0]['eef_pose']
+    act = expert_data[0]['ja']
+    obs_torch = torch.from_numpy(obs).cuda()
+    out_ac = net(obs_torch)
+    fig, ax = plt.subplots(4, 1)
+    out_ac_np = out_ac.detach().cpu().numpy()
+    for j in range(4):
+        ax[j].plot(out_ac_np[:, j], color='red')
+        ax[j].plot(act[:, j], color='blue')
+    plt.savefig(f'{output_name}')
+    if save:
+        torch.save(out_ac, "out_ac.pt")
+    plt.clf()
+    plt.close("all")
     
 def hyp_search(epoch_number):
-    train_loader, test_loader = data(1)
+    train_loader, test_loader = process_data(1)
     lrs = [0.01, 0.001, 0.0001, 0.00001]
     wds = [0, 0.001, 0.0001, 0.00001, 0.000001] 
     eps = [50, 100, 150, 200, 500]
@@ -174,7 +207,7 @@ def hyp_search(epoch_number):
                 train_losses = []
                 valid_losses = []
                 for _ in range(epochs): 
-                    train_loss = one_train_iter(net, optimizer, train_loader)
+                    train_loss = one_train_epoch(net, optimizer, train_loader)
                     valid_loss = eval(net, test_loader)
                     train_losses.append(train_loss)
                     valid_losses.append(valid_loss)
@@ -210,96 +243,47 @@ def main():
     scale = float(sys.argv[2])
     if mode == "train":
         epoch_num = int(sys.argv[3])
-        train_loader, test_loader = data(scale)
-
-        print(len(train_loader))
-        
-        mse_loss = nn.MSELoss()
+        train_loader, test_loader = process_data(scale)
         net = BCNet().cuda()
         # net = MLP(4, 800, 4, 3, nn.ReLU()).to(device)
-        optimizer = torch.optim.Adam(net.parameters(), lr=1e-6, weight_decay=1e-05)
+        optimizer = torch.optim.Adam(net.parameters(), lr=0.1, weight_decay=1e-05)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2000, eta_min=1e-6)
+        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.95)
+        train_losses = []
+        valid_losses = []
         for j in range(epoch_num):
-            for batch in train_loader:
-                obs, act = batch
-                obs = obs.cuda()
-                act = act.cuda()
-                act_pred = net(obs)
-                
-                loss = torch.sum((act_pred - act)**2, dim=-1).mean(dim=0)
-
-                # loss = mse_loss(act_pred, act)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+            train_loss = one_train_epoch(net, optimizer, train_loader)
+            valid_loss = eval(net, test_loader)
+            scheduler.step()
             
             if j % PROG == 0:
-                expert_data = RoboDemoDset(f'/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/{DEMO}/demos.hdf', read_only_if_exists=True)
-                obs = expert_data[0]['eef_pose']
-                act = expert_data[0]['ja']
-                obs_torch = torch.from_numpy(obs).cuda()
-                out_ac = net(obs_torch)
-                fig, ax = plt.subplots(4, 1)
-                out_ac_np = out_ac.detach().cpu().numpy()
-                for j in range(4):
-                    ax[j].plot(out_ac_np[:, j], color='red')
-                    ax[j].plot(act[:, j], color='blue')
-                plt.savefig('test_bc_cur_progress.png')
+                vis_traj(net, "test_bc_cur_progress.png")
 
-            print("Epoch %d loss is %f"%(j, loss.item()))
+            print("Epoch %d loss is %f"%(j, train_loss))
+
+            train_losses.append(train_loss)
+            valid_losses.append(valid_loss)
+
             
-        expert_data = RoboDemoDset(f'/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/{DEMO}/demos.hdf', read_only_if_exists=True)
-        obs = expert_data[0]['eef_pose']
-        act = expert_data[0]['ja']
-        obs_torch = torch.from_numpy(obs).cuda()
-        out_ac = net(obs_torch)
-        fig, ax = plt.subplots(4, 1)
-        out_ac_np = out_ac.detach().cpu().numpy()
-        for j in range(4):
-            ax[j].plot(out_ac_np[:, j], color='red')
-            ax[j].plot(act[:, j], color='blue')
-        plt.savefig('test_bc_pred1.png')
-        torch.save(out_ac, "out_ac.pt")
-        # print(len(train_loader))
-        # # net = MLP(3, 300, 3, 3, nn.LeakyReLU()).to(device)
-        # net = BCNet().to(device)
-        # optimizer = torch.optim.Adam(net.parameters()) # 0.0001 0.001
-        # print(len(train_loader))
-        # epochs = epoch_num
-        # train_losses = []
-        # valid_losses = []
-        # for _ in range(epochs): 
-        #     train_loss = one_train_iter(net, optimizer, train_loader)
-        #     valid_loss = eval(net, test_loader)
-        #     train_losses.append(train_loss)
-        #     valid_losses.append(valid_loss)
-        # for state, labels in test_loader:
-        #     state, labels = state.to(device), labels.to(device)
-        #     # print(state)
-        #     print(net(state))
-        #     print(labels)
-        #     # print(state.shape)
-        #     # print(labels.shape)
-        #     # print(net(state).shape)
-        #     break
-
+        vis_traj(net, "test_bc_pred1.png")
+        
+        print("saving model...")
         torch.save(net, f"/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/behavior_cloning/{DEMO}.pt")
         print("saved, terminate.")
 
-        # print("plotting training data")
-        # plt.plot(train_losses, label='train')
-        # plt.plot(valid_losses, label='validation')
-        # plt.legend()
-        # plt.show()
+        print("plotting training data")
+        plt.plot(train_losses, label='train')
+        plt.plot(valid_losses, label='validation')
+        plt.legend()
+        plt.show()
 
         # import IPython
         # IPython.embed()
 
-        # try_until_estop(net, 1)
     elif mode == "deploy":
         deploy(scale)
     elif mode == "test_data":
-        data(1)
+        process_data(1)
     elif mode == "search":
         epoch_num = int(sys.argv[3])
         hyp_search(epoch_num)
@@ -312,7 +296,7 @@ def main():
 # def debug():
 
 def pred_replay(num):
-    expert_data = RoboDemoDset(f'/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/data/demos/{DEMO}/demos.hdf', read_only_if_exists=True)
+    expert_data = EXPERT
     net = torch.load(f"/home/xarm/Documents/JacobAndDavin/test/rewardlearning-robot/behavior_cloning/{DEMO}.pt")
     obs = expert_data[num]['eef_pose']
     act = expert_data[num]['ja']
@@ -339,6 +323,9 @@ def pred_replay(num):
     net.double()
     while True:
             obs = env.reset()
+
+            import IPython
+            IPython.embed()
 
             # preds = torch.load("out_ac.pt")
             print('press "a" then "enter" to start, hit "a" again to stop')
@@ -391,7 +378,7 @@ def deploy(SCALE):
         use_gripper=True,
         random_reset_home_pose=False,
         speed=150,
-        low_colision_sensitivity=True,
+        low_collision_sensitivity=True,
         scale_factor=10
     )
     net.eval()
@@ -417,6 +404,7 @@ def deploy(SCALE):
                 return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
 
             old_settings = termios.tcgetattr(sys.stdin)
+            updates = []
             try:
                 tty.setcbreak(sys.stdin.fileno())
                 with torch.no_grad():
@@ -428,6 +416,13 @@ def deploy(SCALE):
                             c = sys.stdin.read(1)
                             print(c)
                             if c == 'a':  # x1b is ESC
+                                plt.clf()
+                                fig, ax = plt.subplots(4, 1)
+                                updates = np.array(updates)
+                                for j in range(4):
+                                    ax[j].plot(np.arange(0, len(updates), 1), updates[:, j])
+                                plt.savefig('current_traj')
+                                updates = []
                                 print("\tHit (a) stop deploying\n")
                                 break
 
@@ -435,12 +430,14 @@ def deploy(SCALE):
                         
                         pos = torch.tensor(obs['ee_pos']).double().to(device)
                         update = np.array(net(pos).cpu())
+                        updates.append(update)
                         # if isData():
                         #     c = sys.stdin.read(1)
                         #     print(c)
                         #     if c == 's':
                         #         update[3] = 1
                         #         print("here")
+                        print(update)
                         obs, _, _, _ = env.step(action=update, delta=True)
                         # print(update[3])
 
