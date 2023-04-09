@@ -70,7 +70,7 @@ class XArmBaseEnvironment(RobotEnv):
                 T.ToTensor(),  # divides by 255, will also convert to chw
             ])
             if r3m_net is None:
-                self.r3m = load_r3m("resnet50")  # resnet18
+                self.r3m = load_r3m("resnet18")  # resnet18
                 self.r3m.eval()
                 self.r3m.to(device)
             else:
@@ -161,6 +161,7 @@ class XArmBaseEnvironment(RobotEnv):
             hi = np.array([1, 1, 1])
         return gym.spaces.Box(low=low, high=hi, dtype=np.float32)
 
+    @property
     def image_space(self) -> gym.spaces.Box:
         return gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8)  # HWC
 
