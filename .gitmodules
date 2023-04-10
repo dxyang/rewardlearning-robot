@@ -4,3 +4,6 @@
 [submodule "r3m"]
 	path = r3m
 	url = git@github.com:facebookresearch/r3m.git
+[submodule "rlpd"]
+	path = rlpd
+	url = git@github.com:Jacob6819/rlpd.git
