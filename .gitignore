@@ -148,7 +148,8 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
+#
+gitSignOn.bash
 # Pyre type checker
 .pyre/
 
