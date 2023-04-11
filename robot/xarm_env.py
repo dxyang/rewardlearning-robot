@@ -140,7 +140,7 @@ class XArmCmSafeEnvironment(RobotEnv):
 
     @property
     def action_space(self):
-        # 6-DoF (x, y, z, roll, pitch, yaw) (absolute or deltas)
+        # 3DOF (x,y,z) (absolute or deltas) and gripper potentially
         if self.use_gripper:
             low = np.array([-1, -1, -1, -1])
             hi = np.array([1, 1, 1, 1])
@@ -227,6 +227,7 @@ class XArmCmSafeEnvironment(RobotEnv):
         self.movement_mode()
 
         message = Float32MultiArray()
+        # Xarm takes mm, but xyz is in cm
         message.data = np.asarray(xyz*10).copy()
         self.pub.publish(message)
 
@@ -238,6 +239,7 @@ class XArmCmSafeEnvironment(RobotEnv):
         error, position = self.robot.get_position()
         if error != 0:
             raise NotImplementedError('Need to handle xarm exception')
+        # position is in mm, want to return it in cm so devide by 10
         return np.array(position[:3]) / 10
 
     def wait_until_stopped(self):

@@ -4,14 +4,11 @@ demonstrate.py
 Collect interleaved demonstrations (in the case of kinesthetic teaching) of recording a kinesthetic demo,
 then (optionally) playing back the demonstration to collect visual states.
 
-As we're using Polymetis, you should use the following to launch the robot controller:
-    > launch_robot.py --config-path /home/iliad/Projects/oncorr/conf/robot --config-name robot_launch.yaml timeout=15;
-    > launch_gripper.py --config-path /home/iliad/Projects/oncorr/conf/robot --config-name gripper_launch.yaml;
-
-References:
-    - https://github.com/facebookresearch/fairo/blob/main/polymetis/examples/2_impedance_control.py
-    - https://github.com/AGI-Labs/franka_control/blob/master/record.py
-    - https://github.com/AGI-Labs/franka_control/blob/master/playback.py
+To run this: first run the robot listner.py
+    > cd ~/catkin_ws
+    >source devel/setup.bash
+    > python robot_listner.py
+    > python record_xarm_vr.py 
 """
 import math
 import os

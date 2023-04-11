@@ -9,6 +9,7 @@ from xarm.wrapper import XArmAPI
 import rospy
 from std_msgs.msg import String, Float32MultiArray
 
+# The default home position for the Xarm, when we start up the arm, it will go to the home position
 pos = np.array([553.490479, 29.007273, 424.868439])
 
 def callback(data):
