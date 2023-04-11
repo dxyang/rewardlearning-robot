@@ -1,17 +1,10 @@
 from abc import ABC, abstractmethod
-import random
-import time
 from typing import Any, Dict, List, Optional, Tuple
 from cam.realsense import RealSenseInterface
-from PIL import Image
 import gym
 import numpy as np
 import torch
 import torchvision.transforms as T
-XARM_SDK = '/home/xarm/Desktop/xArm-Python-SDK'
-import sys
-sys.path.append(XARM_SDK)
-from xarm.wrapper import XArmAPI
 from reward_extraction.reward_functions import RobotLearnedRewardFunction
 from robot.utils import Rate
 from r3m import load_r3m
