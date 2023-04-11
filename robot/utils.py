@@ -9,7 +9,7 @@ import numpy as np
 ROBOT_IP = "173.16.0.1"
 
 # Constants
-HZ = 5 #20 # slow everything the fuck down
+HZ = 10 #20 # slow everything the fuck down
 POLE_LIMIT = 1.0 - 1e-6
 TOLERANCE = 1e-10
 
@@ -20,12 +20,12 @@ HOMES = {
 
 # Control Frequency & other useful constants...
 #   > Ref: Gripper constants from: https://frankaemika.github.io/libfranka/grasp_object_8cpp-example.html
-GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH = 1, 120, 0.08570
+GRIPPER_SPEED, GRIPPER_FORCE, GRIPPER_MAX_WIDTH = 0.5, 120, 0.08570
 
 # Joint Impedance Controller gains (used mostly for recording kinesthetic demos & playback)
 #   =>> Libfranka Defaults (https://frankaemika.github.io/libfranka/joint_impedance_control_8cpp-example.html)
 KQ_GAINS = {
-    "record": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+    "record": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
     "default": [600, 600, 600, 600, 250, 150, 50],
 }
 KQD_GAINS = {
