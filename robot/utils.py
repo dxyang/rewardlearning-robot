@@ -9,7 +9,7 @@ import numpy as np
 ROBOT_IP = "173.16.0.1"
 
 # Constants
-HZ = 10 #20 # slow everything the fuck down
+HZ = 5 #20 # slow everything the fuck down
 POLE_LIMIT = 1.0 - 1e-6
 TOLERANCE = 1e-10
 
