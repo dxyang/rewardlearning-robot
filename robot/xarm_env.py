@@ -234,6 +234,7 @@ class XArmCmSafeEnvironment(RobotEnv):
         self.r.sleep()
         if wait:
             self.wait_until_stopped()
+            
     def get_cur_xyz(self) -> np.ndarray:
         # In cm
         error, position = self.robot.get_position()
