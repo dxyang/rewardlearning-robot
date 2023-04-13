@@ -29,10 +29,9 @@ import termios
 
 from cam.utils import VideoRecorder
 
-from robot.base_robot import XArmTaskSpaceEnv
+from robot.xarm_env import XArmCmSafeEnvironment
 from robot.data import RoboDemoDset
 from robot.utils import HZ
-from robot.xarm_env import XArmEnv
 
 
 class ArgumentParser(Tap):
@@ -76,7 +75,7 @@ def demonstrate() -> None:
 
     # Initialize environment in `record` mode...
     print("[*] Initializing Robot Connection...")
-    env = XArmTaskSpaceEnv(
+    env = XArmCmSafeEnvironment(
         control_frequency_hz=HZ,
         use_camera=args.include_visual_states,
         use_gripper=args.use_gripper,
@@ -111,7 +110,7 @@ def demonstrate() -> None:
         # Reset environment & wait on user input...
         obs = env.reset()
         print('here')
-        env.set_mode("record")
+        # env.set_mode("record")
 
         print(
             "[*] Ready to record!\n"
