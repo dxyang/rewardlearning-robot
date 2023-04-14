@@ -58,10 +58,10 @@ class RoboDemoDset(Dataset):
         # (bs, traj_length, rgbs)
         # (bs, traj_length, joint_angles)
         # (bs, eef_poses)
-        if self.rgb_shape is None:
-            self.rgb_shape = rgbs.shape[1:]
-            self.ja_shape = joint_angles.shape[1:]
-            self.eef_shape = eef_poses.shape[1:]
+        self.rgb_shape = rgbs.shape[1:]
+        self.ja_shape = joint_angles.shape[1:]
+        self.eef_shape = eef_poses.shape[1:]
+
 
         bs = rgbs.shape[0]
         for b_idx in range(bs):
@@ -70,7 +70,11 @@ class RoboDemoDset(Dataset):
             grp.create_dataset("rgb", shape=self.rgb_shape, dtype=np.uint8)
             grp.create_dataset("ja", shape=self.ja_shape, dtype=np.float32)
             grp.create_dataset("eef_pose", shape=self.eef_shape, dtype=np.float32)
+            # grp.create_dataset("eef_deltas", shape=self.eef_delta_shape)
 
+            # print(f"rgbs: {rgbs}")
+            # print(f"b_idx: {b_idx}")
+            # grp["rgb"][:]
             grp["rgb"][:] = rgbs[b_idx]
             grp["ja"][:] = joint_angles[b_idx]
             grp["eef_pose"][:] = eef_poses[b_idx]

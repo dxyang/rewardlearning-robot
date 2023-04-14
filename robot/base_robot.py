@@ -1,12 +1,10 @@
 from abc import ABC, abstractmethod
-import random
 from typing import Any, Dict, List, Optional, Tuple
-
+from cam.realsense import RealSenseInterface
 import gym
 import numpy as np
 import torch
 import torchvision.transforms as T
-
 from reward_extraction.reward_functions import RobotLearnedRewardFunction
 from robot.utils import Rate
 from r3m import load_r3m
@@ -149,7 +147,7 @@ class TaskSpaceRobotEnv(RobotEnv):
         (process and pass to a learned function, calculate some l2 distance, etc.)
         '''
         return 0
-# test commit since github is weird
+
 
 class LrfTaskSpaceRobotEnv(TaskSpaceRobotEnv):
     def set_lrf(self, lrf: RobotLearnedRewardFunction):
