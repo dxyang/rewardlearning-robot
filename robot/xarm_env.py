@@ -56,6 +56,7 @@ class XArmCmSafeEnvironment(RobotEnv):
         self.movement_mode()
         self.robot.set_vacuum_gripper(False)
         self.r = rospy.Rate(control_frequency_hz)
+
         '''
         r3m useful for converting images to embeddings
         '''
@@ -155,15 +156,18 @@ class XArmCmSafeEnvironment(RobotEnv):
 
     def robot_setup(self, home: str = 'default'):
         self.gripper_val = -1
-        if self.collision_sensitivity:
-            self.robot.set_collision_sensitivity(0)
+
+        if not self.robot.connected:
+            self.robot.connect()
+
         print(f'Going to initial position')
         if home == 'default':
-            self.movement_mode()
+            # self.movement_mode()
             # In order to fix Kinematics error, if you just force reset to jas, it works
             # self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0],
             #                            wait=True)
-            self.move_xyz(np.array([55.3490479, 2.9007273, 42.4868439]), wait=True)
+            time.sleep(1)
+            self.move_xyz(np.array([55.3490479, 2.9007273, 42.4868439]))
             time.sleep(2)
             self.robot.set_vacuum_gripper(False)
         else:
@@ -224,7 +228,7 @@ class XArmCmSafeEnvironment(RobotEnv):
             xyz[i] = max(self.min_box[i], xyz[i])
             xyz[i] = min(self.max_box[i], xyz[i])
     
-        self.movement_mode()
+        # self.movement_mode()
 
         message = Float32MultiArray()
         # Xarm takes mm, but xyz is in cm
@@ -303,5 +307,28 @@ class SimpleRealXArmReach(RLReadyXarmEnvironment):
 
     def _calculate_reward(self, obs):
         # Current goal position is '[60.4, -5.47, 35.41]'
+        dist = np.linalg.norm(obs['obs'][:3] - self.goal)
+        return -dist
+
+class LrfRealXarmReach(RLReadyXarmEnvironment):
+    from reward_extraction.reward_functions import RobotLearnedRewardFunction
+
+    def __init__(self, goal, **kwargs):
+        self.lrf = None
+        self.goal = goal
+        RLReadyXarmEnvironment.__init__(self, **kwargs)
+
+    def set_lrf(self, lrf: RobotLearnedRewardFunction):
+        print(f"[LRFXarmReach] Learned Reward Function set!")
+        self.lrf = lrf
+
+    def _calculate_reward(self, obs):
+        assert self.lrf is not None
+
+        state = torch.from_numpy(obs["r3m_vec"]).float()
+        reward = self.lrf._calculate_reward(state)
+        return reward
+    
+    def groundTruthReward(self, obs):
         dist = np.linalg.norm(obs['obs'][:3] - self.goal)
         return -dist

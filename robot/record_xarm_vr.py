@@ -30,7 +30,7 @@ from cam.utils import VideoRecorder
 from robot.data import RoboDemoDset
 from robot.utils import HZ
 from robot.vr import OculusController
-from robot.xarm_env import XArmCentimeterSafeEnvironment
+from robot.xarm_env import XArmCmSafeEnvironment
 
 
 class ArgumentParser(Tap):
@@ -72,14 +72,14 @@ def demonstrate() -> None:
 
     # Initialize environment in `record` mode...
     print("[*] Initializing Robot Connection...")
-    env = XArmCentimeterSafeEnvironment(
+    env = XArmCmSafeEnvironment(
         control_frequency_hz=HZ,
         use_camera=args.include_visual_states,
         # TODO: create some sort of button pressing mechanism to open and close the gripper,
         use_gripper=True,
         random_reset_home_pose=args.random_reset,
-        speed=150,
-        low_colision_sensitivity=True,
+        # speed=150,
+        # low_colision_sensitivity=True,
         scale_factor=10,
     )
     oculus = OculusController()
