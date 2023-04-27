@@ -9,7 +9,7 @@ import numpy as np
 ROBOT_IP = "173.16.0.1"
 
 # Constants
-HZ = 5 #20 # slow everything the fuck down
+HZ = 8 #20 # slow everything the fuck down
 POLE_LIMIT = 1.0 - 1e-6
 TOLERANCE = 1e-10
 
@@ -88,6 +88,8 @@ def quat2rmat(quat) -> np.ndarray:
         dtype=np.float64
     )
 
+def bound(low, high, value):
+    return max(low, min(high, value))
 
 def rmat2euler_xyz(rmat: np.ndarray) -> np.ndarray:
     """

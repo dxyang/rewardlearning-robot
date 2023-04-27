@@ -15,7 +15,7 @@ import sys
 sys.path.append(XARM_SDK)
 from xarm.wrapper import XArmAPI
 from reward_extraction.reward_functions import RobotLearnedRewardFunction
-from robot.utils import Rate
+from robot.utils import Rate, bound
 from r3m import load_r3m
 import rospy
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -28,14 +28,17 @@ class XArmCmSafeEnvironment(RobotEnv):
             control_frequency_hz: int,
             scale_factor: float = 10,
             use_gripper: bool = False,
+            use_claw: bool = False,
             use_camera: bool = False,
             use_r3m: bool = False,
             r3m_net: torch.nn.Module = None,
             xarm_ip: str = '192.168.1.220',
             random_reset_home_pose: bool = False,
             low_collision_sensitivity: bool = False,
+
         ):
         # Properties that are needed, but we don't use ourselves
+        assert not (use_claw and use_gripper)
         self.spec = None
         self.hz = control_frequency_hz
 
@@ -48,6 +51,7 @@ class XArmCmSafeEnvironment(RobotEnv):
         
         self.rate = Rate(control_frequency_hz)
         self.use_gripper = use_gripper
+        self.use_claw = use_claw
         self.random_reset_home_pos = random_reset_home_pose
         self.xarm_ip = xarm_ip
         self.collision_sensitivity = low_collision_sensitivity
@@ -56,7 +60,7 @@ class XArmCmSafeEnvironment(RobotEnv):
         self.movement_mode()
         self.robot.set_vacuum_gripper(False)
         self.r = rospy.Rate(control_frequency_hz)
-
+        self.gripper_val = -1
         '''
         r3m useful for converting images to embeddings
         '''
@@ -114,6 +118,9 @@ class XArmCmSafeEnvironment(RobotEnv):
             if self.use_gripper:
                 assert action.shape[0] == 4
                 self.update_gripper(action[3])
+            elif self.use_claw:
+                assert action.shape[0] == 4
+                self.update_claw(action[3], deltas=delta)
             else:
                 assert action.shape[0] == 3
             self.move_xyz(action[:3], deltas=delta)
@@ -132,6 +139,12 @@ class XArmCmSafeEnvironment(RobotEnv):
         else:
             self.gripper_val = -1
             self.robot.set_vacuum_gripper(False)
+    
+    def update_claw(self,command: float, deltas=True):
+        if not deltas:
+            self.robot.set_gripper_position(bound(-10, 1000, command))
+        else:
+            self.robot.set_gripper_position(bound(-10, 1000, self.gripper_val + bound(-1, 1, command) * self.scale_factor*10), wait=False)
 
     def close(self):
         self.robot.disconnect()
@@ -155,7 +168,10 @@ class XArmCmSafeEnvironment(RobotEnv):
         return gym.spaces.Box(low=0, high=255, shape=(480, 640, 3), dtype=np.uint8)  # HWC
 
     def robot_setup(self, home: str = 'default'):
-        self.gripper_val = -1
+        if self.use_gripper:
+            self.gripper_val = -1
+        elif self.use_claw:
+            self.gripper_val = 500
 
         if not self.robot.connected:
             self.robot.connect()
@@ -166,10 +182,13 @@ class XArmCmSafeEnvironment(RobotEnv):
             # In order to fix Kinematics error, if you just force reset to jas, it works
             # self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0],
             #                            wait=True)
-            time.sleep(1)
+            time.sleep(.5)
             self.move_xyz(np.array([55.3490479, 2.9007273, 42.4868439]))
+            if self.use_claw:
+                self.robot.set_gripper_position(500, wait=False)
             time.sleep(2)
-            self.robot.set_vacuum_gripper(False)
+            if self.use_gripper:
+                self.robot.set_vacuum_gripper(False)
         else:
             raise NotImplementedError("Only have one default hardcoded reset pos")
         if self.random_reset_home_pos:
@@ -188,15 +207,24 @@ class XArmCmSafeEnvironment(RobotEnv):
         if self.use_camera:
             self.rgb, self.d = self.cam.get_latest_rgbd()
         position = self.get_cur_xyz()
+        
 
         obs = {
             "ee_pos": position,
-            "delta_ee_pos": (position - self.get_cur_xyz()) / self.scale_factor,
+            "delta_ee_pos": (position - self.cur_xyz) / self.scale_factor,
         }
-
         if self.use_gripper:
+            claw_pos = self.get_cur_claw()
             obs['ee_pos'] = np.append(obs['ee_pos'], self.gripper_val)
             obs['delta_ee_pos'] = np.append(obs['delta_ee_pos'], self.gripper_val)
+        
+        if self.use_claw:
+            claw_pos = self.get_cur_claw()
+            # print((claw_pos-self.gripper_val)/self.scale_factor)
+            # print('here')
+            obs['ee_pos'] = np.append(obs['ee_pos'], claw_pos)
+            obs['delta_ee_pos'] = np.append(obs['delta_ee_pos'], (claw_pos-self.gripper_val)/(self.scale_factor*10))
+            self.gripper_val = claw_pos
 
         if self.use_camera:
             obs['rgb_image'] = self.rgb
@@ -225,8 +253,9 @@ class XArmCmSafeEnvironment(RobotEnv):
         # Clamp it to be within the min and max poses. The min and max are in centimeters
         # and clamped to centimeters
         for i in range(len(xyz)):
-            xyz[i] = max(self.min_box[i], xyz[i])
-            xyz[i] = min(self.max_box[i], xyz[i])
+            xyz[i] = bound(self.min_box[i], self.max_box[i], xyz[i])
+            # xyz[i] = max(self.min_box[i], xyz[i])
+            # xyz[i] = min(self.max_box[i], xyz[i])
     
         # self.movement_mode()
 
@@ -246,7 +275,9 @@ class XArmCmSafeEnvironment(RobotEnv):
             raise NotImplementedError('Need to handle xarm exception')
         # position is in mm, want to return it in cm so devide by 10
         return np.array(position[:3]) / 10
-
+    def get_cur_claw(self) -> float:
+        return self.robot.get_gripper_position()[1]
+    
     def wait_until_stopped(self):
         while True:
             time.sleep(.1)
@@ -274,7 +305,7 @@ class RLReadyXarmEnvironment(XArmCmSafeEnvironment):
                 r3m_with_ppc = np.concatenate([r3m_embedding, state_obs])
                 new_obs["r3m_vec"] = r3m_embedding
                 new_obs["r3m_with_ppc"] = r3m_with_ppc
-
+        # print(f'func OR: {new_obs}')
         return new_obs
 
     @property
@@ -325,10 +356,16 @@ class LrfRealXarmReach(RLReadyXarmEnvironment):
     def _calculate_reward(self, obs):
         assert self.lrf is not None
 
-        state = torch.from_numpy(obs["r3m_vec"]).float()
+        state = torch.from_numpy(obs['r3m_vec']).float()
+        
         reward = self.lrf._calculate_reward(state)
         return reward
     
+    def calculate_reward(self, obs):
+        # import pdb; pdb.set_trace()
+        return self._calculate_reward({'r3m_vec': obs[:(-4 if self.use_gripper else -3)]})
+    
     def groundTruthReward(self, obs):
-        dist = np.linalg.norm(obs['obs'][:3] - self.goal)
+        ## print(obs)
+        dist = np.linalg.norm(obs[-4:-1] - self.goal)
         return -dist
