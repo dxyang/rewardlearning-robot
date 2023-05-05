@@ -56,6 +56,11 @@ class OculusController():
         for i , delta in enumerate(final_deltas):
             final_deltas[i] = delta if delta > .5 or delta < -.5 else 0
         return final_deltas
+    
+    def wait_till_trigger(self):
+        print("PUSH TRIGGER WHEN READY")
+        while not (self.get_buttons()['RTr']):
+            time.sleep(0.1)
 
 def main():
     reader = OculusController()
