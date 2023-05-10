@@ -46,8 +46,14 @@ class XArmCmSafeEnvironment(RobotEnv):
         pub = rospy.Publisher('commanded_positions', Float32MultiArray)
         self.pub = pub
 
-        self.min_box = [26.0, -23.1, 13]
-        self.max_box = [54.4, 20.7, 44.0]
+        # self.min_box = [21.0, -23.1, 20] # if not pushing, x = 26, z = 17.6
+        # self.max_box = [54.4, 20.7, 44.0]
+
+        '''
+        Debug Mode, make sure to uncomment the min, max box above back
+        '''
+        self.min_box = [21.0, -23.1, 42.5] # if not pushing, x = 26, z = 17.6
+        self.max_box = [54.4, 20.7, 42.5]
         
         self.rate = Rate(control_frequency_hz)
         self.use_gripper = use_gripper
@@ -142,9 +148,9 @@ class XArmCmSafeEnvironment(RobotEnv):
     
     def update_claw(self,command: float, deltas=True):
         if not deltas:
-            self.robot.set_gripper_position(bound(-10, 1000, command))
+            self.robot.set_gripper_position(bound(-10, 850, command))
         else:
-            self.robot.set_gripper_position(bound(-10, 1000, self.gripper_val + bound(-1, 1, command) * self.scale_factor*10), wait=False)
+            self.robot.set_gripper_position(bound(-10, 850, self.gripper_val + bound(-1, 1, command) * self.scale_factor*10), wait=False)
 
     def close(self):
         self.robot.disconnect()
@@ -353,19 +359,28 @@ class LrfRealXarmReach(RLReadyXarmEnvironment):
         print(f"[LRFXarmReach] Learned Reward Function set!")
         self.lrf = lrf
 
-    def _calculate_reward(self, obs):
+    def _calculate_reward(self, obs, dbg: bool = False, exp_only: bool = False):
         assert self.lrf is not None
 
         state = torch.from_numpy(obs['r3m_vec']).float()
         
-        reward = self.lrf._calculate_reward(state)
+        reward = self.lrf._calculate_reward(state, dbg=dbg, exp_only=exp_only)
         return reward
     
-    def calculate_reward(self, obs):
-        # import pdb; pdb.set_trace()
-        return self._calculate_reward({'r3m_vec': obs[:(-4 if self.use_gripper else -3)]})
+ 
+    def calculate_reward(self, obs, exp_only: bool = False):
+        """
+        Takes obs which is just the r3m_vector, with no PPC.
+        """
+        return self._calculate_reward({'r3m_vec': obs}, exp_only=exp_only)
+    
+    def debug_reward(self, obs):
+        """
+        Takes obs which is just the r3m_vector, with no PPC.
+        """
+        return self._calculate_reward({'r3m_vec': obs}, dbg=True, exp_only=False)
+
     
     def groundTruthReward(self, obs):
-        ## print(obs)
         dist = np.linalg.norm(obs[-4:-1] - self.goal)
         return -dist

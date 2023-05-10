@@ -50,8 +50,8 @@ class OculusController():
 
         final_deltas = [0,0,0]
         final_deltas[2] = deltas[1]
-        final_deltas[1] = deltas[0] 
-        final_deltas[0] = deltas[2] 
+        final_deltas[1] = - deltas[0] 
+        final_deltas[0] = - deltas[2] 
         final_deltas = np.array(final_deltas) * 100
         for i , delta in enumerate(final_deltas):
             final_deltas[i] = delta if delta > .5 or delta < -.5 else 0

@@ -29,7 +29,7 @@ class RoboDemoDset(Dataset):
 
         self.save_path = save_path
         self.read_only_if_exists = read_only_if_exists
-        self.rgb_shape, self.ja_shape, self.eef_shape = None, None, None
+        self.rgb_shape, self.ja_shape, self.eef_shape, self.r3m_vec_shape, self.r3m_with_ppc_shape = None, None, None, None, None
 
     def __del__(self):
         self.f.close()
@@ -42,7 +42,7 @@ class RoboDemoDset(Dataset):
             raise IndexError
 
         return_dict = {}
-        keys = ["rgb", "ja", "eef_pose", "r3m_vec"]
+        keys = ["rgb", "ja", "eef_pose", "r3m_vec", "r3m_with_ppc"]
 
         for k in keys:
             if k in self.f[str(idx)]:
@@ -50,7 +50,7 @@ class RoboDemoDset(Dataset):
 
         return return_dict
 
-    def add_traj(self, rgbs, joint_angles, eef_poses):
+    def add_traj(self, rgbs, joint_angles, eef_poses, r3m_vec , r3m_with_ppc):
         if not self.created and self.read_only_if_exists:
             assert False
 
@@ -61,6 +61,8 @@ class RoboDemoDset(Dataset):
         self.rgb_shape = rgbs.shape[1:]
         self.ja_shape = joint_angles.shape[1:]
         self.eef_shape = eef_poses.shape[1:]
+        self.r3m_vec_shape = r3m_vec.shape[1:]
+        self.r3m_with_ppc_shape = r3m_with_ppc.shape[1:]
 
 
         bs = rgbs.shape[0]
@@ -70,6 +72,8 @@ class RoboDemoDset(Dataset):
             grp.create_dataset("rgb", shape=self.rgb_shape, dtype=np.uint8)
             grp.create_dataset("ja", shape=self.ja_shape, dtype=np.float32)
             grp.create_dataset("eef_pose", shape=self.eef_shape, dtype=np.float32)
+            grp.create_dataset("r3m_vec", shape=self.r3m_vec_shape, dtype=np.float32)
+            grp.create_dataset("r3m_with_ppc", shape=self.r3m_with_ppc_shape, dtype=np.float32)
             # grp.create_dataset("eef_deltas", shape=self.eef_delta_shape)
 
             # print(f"rgbs: {rgbs}")
@@ -78,6 +82,8 @@ class RoboDemoDset(Dataset):
             grp["rgb"][:] = rgbs[b_idx]
             grp["ja"][:] = joint_angles[b_idx]
             grp["eef_pose"][:] = eef_poses[b_idx]
+            grp["r3m_vec"][:] = r3m_vec[b_idx]
+            grp["r3m_with_ppc"][:] = r3m_with_ppc[b_idx]
 
         self.length += bs
         self.f.flush()

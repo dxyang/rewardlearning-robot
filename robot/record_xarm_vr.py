@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 from tap import Tap
-from pynput.keyboard import Key, Listener
+# from pynput.keyboard import Key, Listener
 import sys
 import select
 import tty
@@ -30,7 +30,7 @@ from cam.utils import VideoRecorder
 from robot.data import RoboDemoDset
 from robot.utils import HZ
 from robot.vr import OculusController
-from robot.xarm_env import XArmCmSafeEnvironment
+from robot.xarm_env import XArmCmSafeEnvironment, RLReadyXarmEnvironment
 
 
 class ArgumentParser(Tap):
@@ -72,15 +72,23 @@ def demonstrate() -> None:
 
     # Initialize environment in `record` mode...
     print("[*] Initializing Robot Connection...")
-    env = XArmCmSafeEnvironment(
+    from r3m import load_r3m
+    r3m_net = load_r3m("resnet18")
+    r3m_net.to("cuda")
+    r3m_net.eval()
+    r3m_embedding_dim = 512 #512 #2048
+    env = RLReadyXarmEnvironment(
         control_frequency_hz=HZ,
         use_camera=args.include_visual_states,
         # TODO: create some sort of button pressing mechanism to open and close the gripper,
-        use_gripper=True,
+        use_gripper=False,
+        use_claw=False,
         random_reset_home_pose=args.random_reset,
         # speed=150,
         # low_colision_sensitivity=True,
-        scale_factor=10,
+        scale_factor=5,
+        use_r3m=True,
+        r3m_net = r3m_net
     )
     oculus = OculusController()
 
@@ -132,6 +140,7 @@ def demonstrate() -> None:
         # rgbs = []
         ee_poses = []
         ee_deltas = []
+        r3m_ppc = []
         oculus.reset()
         # angle_poses = []
         # print(args.max_time_per_demo)
@@ -148,6 +157,7 @@ def demonstrate() -> None:
             b = press['B']
             tr = press['RTr']
             suc = press['RG']
+            gripper = press['rightJS'][0]
 
             # Get Button Input (only if True) --> handle extended button press...
 
@@ -161,21 +171,14 @@ def demonstrate() -> None:
                 deltas = oculus.get_deltas() / 8
                 if args.noise:
                     deltas += np.random.normal(0, 0.02, deltas.shape)
-                deltas = np.append(deltas, -1)
-                if suc:
-                    deltas[3] = 1
-                #  print(deltas)
-                # for i, delt in enumerate(deltas):
-                #     if abs(delt) > 1:
-                #         deltas[i] = 1 * delt / abs(delt)
-                # print(deltas)
-                # norm = np.linalg.norm(deltas)
-                # if not norm == 0:
-                #     deltas =  deltas / norm
-                # print(deltas)
+                # deltas = np.append(deltas, -1)
+                # if suc:
+                #     deltas[3] = 1
+                # deltas = np.append(deltas, gripper)
                 obs, _, _, _ = env.step(action=deltas, delta=True)
                 ee_poses.append(obs["ee_pos"])
                 ee_deltas.append(obs['delta_ee_pos'])
+                r3m_ppc.append(obs["r3m_with_ppc"])
                 # angle_poses.append(obs['q'])
                 # rgbs.append(obs["rgb_image"])
 
@@ -210,17 +213,17 @@ def demonstrate() -> None:
         jas = []
         eef_poses = []
         rgbs = []
-        eef_deltas = []
+        r3m_vecs = []
+        r3m_with_ppcs = []
         if do_playback:
             # TODO(siddk) -- handle Camera observation logging...
+            #TODO: WHY COPPY?
             obs = env.reset()
-            # eef_poses.append(obs["ee_pose"].copy())
-            # eef_xyzs.append(obs["ee_pose"][:3].copy())
-            # jas.append(obs["q"].copy())
             rgbs.append(obs["rgb_image"].copy())
-            # jas.append(obs['q'])
-            eef_poses.append(obs['ee_pos'])
-            ee_deltas.append(obs['delta_ee_pos'])
+            jas.append(obs['q'].copy())
+            eef_poses.append(obs['ee_pos'].copy())
+            r3m_with_ppcs.append(obs["r3m_with_ppc"].copy())
+            r3m_vecs.append(obs['r3m_vec'].copy())
 
             # Block on User Ready -- Robot will move, so this is for safety...
             print("\tReady to playback! Get out of the way, and hit (A) to continue or TR to skip...")
@@ -239,11 +242,13 @@ def demonstrate() -> None:
             for idx in range(len(ee_poses)):
                 if(tr):
                     break
+                # ee_poses[idx][3] -= 5
                 obs, _, _, _ = env.step(ee_poses[idx], delta=False)
                 rgbs.append(obs["rgb_image"].copy())
-                # jas.append(obs['q'])
-                eef_poses.append(obs['ee_pos'])
-                eef_deltas.append(obs['delta_ee_pos'])
+                jas.append(obs['q'].copy())
+                eef_poses.append(obs['ee_pos'].copy())
+                r3m_with_ppcs.append(obs["r3m_with_ppc"].copy())
+                r3m_vecs.append(obs['r3m_vec'].copy())
             # Close Environment
             env.close()
 
@@ -285,12 +290,11 @@ def demonstrate() -> None:
             video_recorder.save(f"{save_str}.mp4")
 
             rgb_np = np.expand_dims(np.array(rgbs), axis=0)  # 1, horizon, h, w, c
-            # ja_np = np.expand_dims(np.array(jas), axis=0)  # 1, horizon, 7
             eefpose_np = np.expand_dims(np.array(eef_poses), axis=0)  # 1, horizon, 7
-            eefdeltas_np = np.expand_dims(np.array(eef_deltas), axis=0)
-            print(rgb_np.shape)
-            # WARNING!! Joint angles is actually EE deltas. This is dumb 🤖🚀
-            dset.add_traj(rgbs=rgb_np, joint_angles=eefdeltas_np, eef_poses=eefpose_np)  # TODO add  joint_angles=ja_np bcak in
+            r3mppc_np = np.expand_dims(np.array(r3m_with_ppcs), axis=0)
+            r3m_vecs_np = np.expand_dims(np.array(r3m_vecs), axis=0)
+            joint_angles_np = np.expand_dims(np.array(jas), axis=0)
+            dset.add_traj(rgbs=rgb_np, joint_angles=joint_angles_np, eef_poses=eefpose_np, r3m_vec=r3m_vecs_np, r3m_with_ppc=r3mppc_np)
             demo_index += 1
 
     # And... that's all folks!

@@ -33,7 +33,7 @@ from cam.utils import VideoRecorder
 from robot.data import RoboDemoDset
 from robot.utils import HZ
 from robot.vr import OculusController
-from robot.xarm_env import XArmCentimeterSafeEnvironment
+from robot.xarm_env import XArmCmSafeEnvironment
 
 
 class ArgumentParser(Tap):
@@ -49,14 +49,12 @@ class ArgumentParser(Tap):
 def demonstrate() -> None:
     args = ArgumentParser().parse_args()
     print("[*] Initializing Robot Connection...")
-    env = XArmCentimeterSafeEnvironment(
-        control_frequency_hz=HZ,
+    env = XArmCmSafeEnvironment(
+        control_frequency_hz=10,
         use_camera=False,
         # TODO: create some sort of button pressing mechanism to open and close the gripper,
         use_gripper=True,
         random_reset_home_pose=args.random_reset,
-        speed=150,
-        low_colision_sensitivity=True,
         scale_factor=10
     )
     oculus = OculusController()
@@ -102,8 +100,9 @@ def demonstrate() -> None:
                     deltas[3] = 1
                 
                 obs, _, _, _ = env.step(action=deltas, delta=True)
-        env.close()
         print(f'Max is equal to {maxs}')
+
+    env.close()
 
 if __name__ == "__main__":
     demonstrate()

@@ -21,6 +21,7 @@ def listener():
     rospy.init_node('listener', anonymous=True)
     r = rospy.Rate(100)
     robot = XArmAPI(xarm_ip)
+    robot.set_collision_sensitivity(0)
     robot.connect(port=xarm_ip)
     robot.motion_enable(enable=True)
     robot.set_mode(1)
