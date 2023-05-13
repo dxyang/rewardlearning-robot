@@ -34,16 +34,18 @@ def mlp(input_dim, hidden_dim, output_dim, hidden_depth, output_mod=None, do_reg
         mods = [nn.Linear(input_dim, output_dim)]
     else:
         if do_regularization:
-            mods = [nn.Linear(input_dim, hidden_dim), nn.BatchNorm1d(hidden_dim), nn.ReLU(inplace=True)]
+            # adding spectral norm
+            # removing batch norm: nn.BatchNorm1d(hidden_dim)
+            mods = [nn.utils.spectral_norm(nn.Linear(input_dim, hidden_dim)), nn.ReLU(inplace=True)]
         else:
             mods = [nn.Linear(input_dim, hidden_dim), nn.ReLU(inplace=True)]
 
         for i in range(hidden_depth - 1):
             if do_regularization:
-                mods += [nn.Linear(hidden_dim, hidden_dim), nn.BatchNorm1d(hidden_dim), nn.ReLU(inplace=True)]
+                mods += [nn.utils.spectral_norm(nn.Linear(hidden_dim, hidden_dim)), nn.ReLU(inplace=True)]
             else:
                 mods += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU(inplace=True)]
-        mods.append(nn.Linear(hidden_dim, output_dim))
+        mods.append(nn.utils.spectral_norm(nn.Linear(hidden_dim, output_dim)))
     if output_mod is not None:
         mods.append(output_mod)
     trunk = nn.Sequential(*mods)

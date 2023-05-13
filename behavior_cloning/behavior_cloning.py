@@ -78,10 +78,7 @@ def process_data(SCALE) -> Tuple[DataLoader, DataLoader]:
    
     state = []
     targets = []
-
-    trajs = []
     for traj in expert_data:
-        trajs.append(trajs)
         ee_poses = traj['eef_pose']
         # VERY BAD WE KNOW
         deltas = traj['ja']

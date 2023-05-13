@@ -52,9 +52,10 @@ class XArmCmSafeEnvironment(RobotEnv):
         '''
         Debug Mode, make sure to uncomment the min, max box above back
         '''
-        self.min_box = [21.0, -23.1, 42.5] # if not pushing, x = 26, z = 17.6
-        self.max_box = [54.4, 20.7, 42.5]
-        
+        # self.min_box = [21.0, -19, 17.8] # if not pushing, x = 26, z = 17.6
+        # self.max_box = [54.4, 20.7, 42.5]
+        self.min_box = [21, -26, 17]
+        self.max_box = [63, 27, 17]
         self.rate = Rate(control_frequency_hz)
         self.use_gripper = use_gripper
         self.use_claw = use_claw
@@ -189,7 +190,8 @@ class XArmCmSafeEnvironment(RobotEnv):
             # self.robot.set_servo_angle(angle=[3.000007, 15.400017, -91.799985, 76.399969, 4.899992, 0.0, 0.0],
             #                            wait=True)
             time.sleep(.5)
-            self.move_xyz(np.array([55.3490479, 2.9007273, 42.4868439]))
+            # self.move_xyz(np.array([55.3490479, 2.9007273, 42.4868439]))
+            self.move_xyz(np.array([24, 0, 17]))
             if self.use_claw:
                 self.robot.set_gripper_position(500, wait=False)
             time.sleep(2)

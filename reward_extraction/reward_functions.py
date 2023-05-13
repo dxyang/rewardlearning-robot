@@ -163,6 +163,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         train_classify_with_mixup: bool = True,
         add_state_noise: bool = True,
         disable_ranking: bool = False, # GAIL / AIRL
+        mask_reg:bool=False,
         train_classifier_with_goal_state_only: bool = False, # VICE,.
         load_hdf_into_ram: bool = True,
         obs_is_image: bool = True,
@@ -191,6 +192,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         self.train_classify_with_mixup = train_classify_with_mixup
         self.add_state_noise = add_state_noise
         self.disable_ranking = disable_ranking
+        self.mask_reg = mask_reg
         self.obs_size = obs_size
         self.obs_is_image = obs_is_image
 
@@ -216,12 +218,12 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         hidden_layer_size = 1024
 
         if not self.disable_ranking:
-            self.ranking_network = Policy(obs_size, 1, hidden_layer_size, hidden_depth)
+            self.ranking_network = Policy(obs_size, 1, hidden_layer_size, hidden_depth) # default is d_reg = False
             self.ranking_network.to(device)
-            self.ranking_optimizer = optim.Adam(list(self.ranking_network.parameters()), lr=self.lr)
-        self.same_traj_classifier = Policy(obs_size, 1, hidden_layer_size, hidden_depth)
+            self.ranking_optimizer = optim.Adam(list(self.ranking_network.parameters()), lr=self.lr) 
+        self.same_traj_classifier = Policy(obs_size, 1, hidden_layer_size, hidden_depth, do_regularization=self.mask_reg) # # default is d_reg = False
         self.same_traj_classifier.to(device)
-        self.same_traj_optimizer = optim.Adam(list(self.same_traj_classifier.parameters()), lr=self.lr)
+        self.same_traj_optimizer = optim.Adam(list(self.same_traj_classifier.parameters()), lr=self.lr, weight_decay=(0.001 if self.mask_reg else 0)) # default is no weight decay
         self.bce_with_logits_criterion = torch.nn.BCEWithLogitsLoss()
 
         # make sure there is expert data
@@ -267,7 +269,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
         train the ranking function a bit so it isn't oututting purely 0 during robot exploration
         '''
         ranking_init_losses = []
-        num_init_steps = 200
+        num_init_steps = 1000
         for i in tqdm(range(num_init_steps)):
             if not self.disable_ranking:
                 self.ranking_optimizer.zero_grad()
@@ -287,7 +289,7 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
     def last_pmr(self):
         return self.progress, self.mask, self.reward
 
-    def _calculate_reward(self, x, dbg: bool = False):
+    def _calculate_reward(self, x, dbg: bool = False, exp_only=False):
         x = x.to(device)
 
         with torch.no_grad():
@@ -316,6 +318,8 @@ class RobotLearnedRewardFunction(LearnedRewardFunction):
 
         if dbg:
             return progress, mask, reward
+        elif exp_only:
+            return progress
         else:
             return reward
 

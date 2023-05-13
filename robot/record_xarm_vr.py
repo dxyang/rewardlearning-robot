@@ -220,7 +220,7 @@ def demonstrate() -> None:
             #TODO: WHY COPPY?
             obs = env.reset()
             rgbs.append(obs["rgb_image"].copy())
-            jas.append(obs['q'].copy())
+            # jas.append(obs['q'].copy())
             eef_poses.append(obs['ee_pos'].copy())
             r3m_with_ppcs.append(obs["r3m_with_ppc"].copy())
             r3m_vecs.append(obs['r3m_vec'].copy())
@@ -245,7 +245,7 @@ def demonstrate() -> None:
                 # ee_poses[idx][3] -= 5
                 obs, _, _, _ = env.step(ee_poses[idx], delta=False)
                 rgbs.append(obs["rgb_image"].copy())
-                jas.append(obs['q'].copy())
+                # jas.append(obs['q'].copy())
                 eef_poses.append(obs['ee_pos'].copy())
                 r3m_with_ppcs.append(obs["r3m_with_ppc"].copy())
                 r3m_vecs.append(obs['r3m_vec'].copy())
